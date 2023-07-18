@@ -1,0 +1,23 @@
+set-globals,
+    media_dir="$(test_dir)/../../media",
+    blue="file://$(media_dir)/defaults//matroska/timed_frames_video_only_1fps.mkv"
+
+
+meta,
+    handles-states=true,
+    args = {
+        "uridecodepoolsrc uri=$(blue) name=p ! $(videosink)",
+    },
+    configs = {
+       "$(validateflow), pad=p:src, buffers-checksum=sha256, ignored-event-types={ tag }, ignored-fields=\"stream-start={stream-id,group-id, stream}, stream-collection={collection}\"",
+    }
+
+pause
+
+foreach, start=<1.0, 2.0, 0.0, 3.0, 5.0>,
+    actions={
+        [seek, start="$(start)", flags=flush+accurate],
+        [wait, duration=1.0],
+    }
+
+stop
