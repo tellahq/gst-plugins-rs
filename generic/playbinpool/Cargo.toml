@@ -1,0 +1,40 @@
+[package]
+name = "gst-plugin-uridecodebinpool"
+version = "0.11.0-alpha.1"
+authors = ["Sebastian Dröge <sebastian@centricular.com>"]
+repository = "https://gitlab.freedesktop.org/gstreamer/gst-plugins-rs"
+license = "MIT OR Apache-2.0"
+description = "GStreamer Rust plugin to handle playbin pipelines to be used in 'subpipelines'"
+edition = "2021"
+rust-version = "1.66"
+
+[dependencies]
+url = "2"
+gst = { package = "gstreamer", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs" }
+gst-base = { package = "gstreamer-base", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs" }
+
+[lib]
+name = "gstrsfile"
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+[build-dependencies]
+gst-plugin-version-helper = { path="../../version-helper" }
+
+[features]
+static = []
+capi = []
+doc = ["gst/v1_18"]
+
+[package.metadata.capi]
+min_version = "0.8.0"
+
+[package.metadata.capi.header]
+enabled = false
+
+[package.metadata.capi.library]
+install_subdir = "gstreamer-1.0"
+versioning = false
+
+[package.metadata.capi.pkg_config]
+requires_private = "gstreamer-1.0, gstreamer-base-1.0, gobject-2.0, glib-2.0, gmodule-2.0"
