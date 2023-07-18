@@ -117,6 +117,8 @@ plugins = {
   'lewton': {'library': 'libgstlewton'},
   'spotify': {'library': 'libgstspotify'},
 
+  'uridecodepool': {'library': 'libgsturidecodepool'},
+
   'file': {'library': 'libgstrsfile'},
   # sodium can have an external dependency, see below
   'threadshare': {

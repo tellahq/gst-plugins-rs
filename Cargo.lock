@@ -2797,6 +2797,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "gst-plugin-uridecodepool"
+version = "0.11.0-alpha.1"
+dependencies = [
+ "futures",
+ "gst-plugin-version-helper",
+ "gstreamer",
+ "gstreamer-app",
+ "gstreamer-base",
+ "once_cell",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "gst-plugin-uriplaylistbin"
 version = "0.13.0-alpha.1"
 dependencies = [
