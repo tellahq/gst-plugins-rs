@@ -13,6 +13,7 @@ members = [
     "generic/file",
     "generic/sodium",
     "generic/threadshare",
+    "generic/playbinpool",
 
     "mux/flavors",
     "mux/fmp4",
