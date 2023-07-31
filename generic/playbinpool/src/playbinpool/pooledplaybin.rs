@@ -27,8 +27,8 @@ impl Default for PooledPlayBin {
         let mut pipeline_builder = gst::ElementFactory::make("playbin3")
             .property("instant-uri", true);
 
-        let audio_sink = gst_app::AppSink::builder().build();
-        let video_sink = gst_app::AppSink::builder().build();
+        let audio_sink = gst_app::AppSink::builder().sync(false).build();
+        let video_sink = gst_app::AppSink::builder().sync(false).build();
         pipeline_builder = pipeline_builder
             .property("video-sink", video_sink.clone())
             .property( "audio-sink", audio_sink.clone());
@@ -63,16 +63,6 @@ impl PartialEq for PooledPlayBin {
     }
 }
 
-impl core::fmt::Debug for PooledPlayBin {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PlayBin")
-            .field("name", &self.name)
-            .field("uri", &self.pipeline.property::<Option<String>>("uri"))
-            .field("state", &self.state)
-            .finish()
-    }
-}
-
 impl PooledPlayBin {
     pub(crate) fn stream_type(&self) -> gst::StreamType {
         self.state.lock().unwrap().stream_type
@@ -94,6 +84,10 @@ impl PooledPlayBin {
         self.pipeline.clone()
     }
 
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
     fn configure_unused_sink(sink: &gst::Element) {
         sink.set_property("enable-last-sample", false);
         sink.set_property("max-buffers", 1u32);
@@ -101,7 +95,6 @@ impl PooledPlayBin {
     }
 
     pub(crate) fn reset(&self, uri: &str, stream_type: gst::StreamType, stream_id: Option<&str>) {
-        gst::error!(CAT, "BEFORE RESET: {self:?}");
         let mut state = self.state.lock().unwrap();
         state.unused_since = None;
         state.stream = None;
@@ -117,8 +110,6 @@ impl PooledPlayBin {
 
         self.set_uri(uri);
 
-        gst::error!(CAT, "{self:?} reset");
-
         Self::configure_unused_sink(&if stream_type == gst::StreamType::VIDEO {
             self.pipeline.property::<gst::Element>("audio-sink")
         } else {
@@ -133,17 +124,17 @@ impl PooledPlayBin {
             gst::MessageView::StreamCollection(s) => {
                 let collection = s.stream_collection();
 
-                gst::debug!(CAT, "{self:?} Got collection {collection:?}");
+                gst::error!(CAT, "{:?} Got collection {collection:?}", self.name);
                 let stream = if let Some(ref wanted_stream_id) = self.stream_id() {
                     if let Some(stream) = collection.iter().find(|stream| {
                         let stream_id = stream.stream_id();
                         stream_id.map_or(false, |s| wanted_stream_id.as_str() == s.as_str())
                     }) {
-                        gst::debug!(CAT, "{self:?} Selecting specified stream: {:?}", wanted_stream_id);
+                        gst::error!(CAT, "{:?} Selecting specified stream: {:?}", self.name, wanted_stream_id);
 
                         Some(stream)
                     } else {
-                        gst::warning!(CAT, "{self:?} Stream not found: {}", wanted_stream_id);
+                        gst::error!(CAT, "{:?} Stream not found: {}", self.name, wanted_stream_id);
 
                         None
                     }
@@ -157,11 +148,11 @@ impl PooledPlayBin {
                     if let Some(stream) = collection.iter().find(|stream|
                             stream.stream_type() == self.stream_type() && stream.stream_id().is_some()
                     ) {
-                        gst::debug!(CAT, "{self:?} Selecting stream: {:?}", stream.stream_id());
+                        gst::error!(CAT, "{:?} Selecting stream: {:?}", self.name, stream.stream_id());
                         stream
                     } else {
                         /* FIXME --- Post an error on the bus! */
-                        gst::error!(CAT, "{self:?} No stream found for type: {:?}", self.stream_type());
+                        gst::error!(CAT, "{:?} No stream found for type: {:?}", self.name, self.stream_type());
 
                         return;
                     }
@@ -196,12 +187,13 @@ impl PooledPlayBin {
         state.stream = None;
         drop(state);
 
-        gst::debug!(CAT, "Releasing pipeline {self:?}");
+        gst::debug!(CAT, "Releasing pipeline {}", self.name);
         self.pipeline.debug_to_dot_file_with_ts(gst::DebugGraphDetails::ALL, "releasing");
         Ok(gst::StateChangeSuccess::Success)
     }
 
     pub(crate) fn stop(&self) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
+        gst::error!(CAT, "----> STOPPING");
         if let Some(sigid) = self.state.lock().unwrap().bus_message_sigid.take() {
             self.pipeline.bus().unwrap().disconnect(sigid);
         }

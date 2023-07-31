@@ -104,12 +104,13 @@ impl PlaybinPool {
         };
 
         if let Some(playbin) = playbin {
-            playbin.reset(uri, stream_type, stream_id);
-            state.running_pipelines.push(playbin.clone());
+            // playbin.reset(uri, stream_type, stream_id);
+            // state.running_pipelines.push(playbin.clone());
 
-            gst::error!(CAT, "Reusing existing pipeline: {:?} - {:?}", playbin, playbin.pipeline().state(None));
+            // gst::error!(CAT, "Reusing existing pipeline: {:?} - {:?}", playbin, playbin.pipeline().state(None));
 
-            return playbin;
+            gst::error!(CAT, "NOT using existing pipeline: {:?} - {:?}", playbin, playbin.pipeline().state(None));
+            // return playbin;
         }
 
         let pipeline = PooledPlayBin::new(uri, stream_type, stream_id);
