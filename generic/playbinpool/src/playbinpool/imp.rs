@@ -110,14 +110,6 @@ impl PlaybinPoolSrc {
         }
     }
 
-    fn sink(&self, playbin: &PooledPlayBin) -> gst_app::AppSink {
-        if self.settings.lock().unwrap().stream_type == gst::StreamType::AUDIO {
-            playbin.audio_sink()
-        } else {
-            playbin.video_sink()
-        }
-    }
-
     fn set_playbin(&self, playbin: &PooledPlayBin) {
         let pipeline = playbin.pipeline();
         let bus = pipeline.bus().unwrap();
@@ -127,7 +119,8 @@ impl PlaybinPoolSrc {
             glib::clone!(@weak self as this => move |bus, message| this.handle_bus_message(bus, message)))
         );
         state.caps_notify_sigid = Some(
-            self.sink(playbin)
+            playbin
+                .sink()
                 .sink_pads()
                 .get(0)
                 .unwrap()
@@ -137,7 +130,7 @@ impl PlaybinPoolSrc {
         );
 
         let obj = self.obj();
-        state.source_setup_sigid = Some(pipeline.connect_closure(
+        state.source_setup_sigid = Some(playbin.uridecodebin().connect_closure(
             "source-setup",
             false,
             glib::closure!(
@@ -391,12 +384,14 @@ impl BaseSrcImpl for PlaybinPoolSrc {
         gst::info!(CAT, imp: self, "Caps changed, renegotiating");
 
         let playbin = self.state.lock().unwrap().playbin.as_ref().unwrap().clone();
-        let caps = self.sink(&playbin)
+        let caps = playbin
+            .sink()
             .sink_pads()
             .get(0)
             .unwrap()
             .current_caps()
             .ok_or_else(|| {
+                gst::debug_bin_to_dot_file_with_ts(&playbin.pipeline(), gst::DebugGraphDetails::all(), "not-neg");
                 gst::loggable_error!(
                     CAT,
                     "No caps on appsink after prerolling \
@@ -428,7 +423,7 @@ impl BaseSrcImpl for PlaybinPoolSrc {
     ) -> Result<gst_base::subclass::base_src::CreateSuccess, gst::FlowError> {
         let playbin = self.state.lock().unwrap().playbin.as_ref().unwrap().clone();
 
-        let sink = self.sink(&playbin);
+        let sink = playbin.sink();
         let mut seqnum = self.state.lock().unwrap().seek_seqnum.take();
 
         let sample = loop {
@@ -496,14 +491,14 @@ impl BaseSrcImpl for PlaybinPoolSrc {
         }
     }
 
-    fn                                                                      stop(&self) -> Result<(), gst::ErrorMessage> {
+    fn stop(&self) -> Result<(), gst::ErrorMessage> {
         gst::error!(CAT, imp: self, "STOPPING");
         let pipeline = {
             let mut state = self.state.lock().unwrap();
             let playbin = state.playbin.as_ref().unwrap().clone();
 
             if let Some(sigid) = state.caps_notify_sigid.take() {
-                self.sink(&playbin).sink_pads().get(0).unwrap().disconnect(sigid);
+                playbin.sink().sink_pads().get(0).unwrap().disconnect(sigid);
             }
             let pipeline = playbin.pipeline();
             if let Some(sigid) = state.bus_message_sigid.take() {
@@ -511,7 +506,7 @@ impl BaseSrcImpl for PlaybinPoolSrc {
                 pipeline.bus().unwrap().disconnect(sigid);
             }
             if let Some(sigid) = state.source_setup_sigid.take() {
-                pipeline.disconnect(sigid);
+                playbin.uridecodebin().disconnect(sigid);
             }
             pipeline
                 .bus()

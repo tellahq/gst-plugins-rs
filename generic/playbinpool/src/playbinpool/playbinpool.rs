@@ -86,12 +86,16 @@ pub(crate) static PLAYBIN_POOL: Lazy<Mutex<super::PlaybinPool>> =
 
 impl PlaybinPool {
     fn set_cleanup_timeout(&self, timeout: u64) {
-        let mut settings = self.settings.lock().unwrap();
-        settings.cleanup_timeout = std::time::Duration::from_secs(timeout);
+        {
+            let mut settings = self.settings.lock().unwrap();
+            settings.cleanup_timeout = std::time::Duration::from_secs(timeout);
+        }
+
+        self.cleanup();
     }
 
     pub(crate) fn get(&self, uri: &str, stream_type: gst::StreamType, stream_id: Option<&str>) -> PooledPlayBin {
-        gst::error!(CAT, "Getting pipeline for {uri}");
+        gst::error!(CAT, "BUT YES BABY Getting pipeline for {uri}");
         let mut state = self.state.lock().unwrap();
 
         let playbin = if let Some(position) = state.unused_pipelines.iter().position(|p|
@@ -103,16 +107,17 @@ impl PlaybinPool {
             state.unused_pipelines.pop()
         };
 
+        gst::error!(CAT, "Got playbin {:?}", playbin);
         if let Some(playbin) = playbin {
-            // playbin.reset(uri, stream_type, stream_id);
-            // state.running_pipelines.push(playbin.clone());
+            playbin.reset(uri, stream_type, stream_id);
+            state.running_pipelines.push(playbin.clone());
 
-            // gst::error!(CAT, "Reusing existing pipeline: {:?} - {:?}", playbin, playbin.pipeline().state(None));
+            gst::error!(CAT, "----> Reusing existing pipeline: {:?} - {:?}", playbin, playbin.pipeline().state(Some(gst::ClockTime::from_mseconds(0))));
 
-            gst::error!(CAT, "NOT using existing pipeline: {:?} - {:?}", playbin, playbin.pipeline().state(None));
-            // return playbin;
+            return playbin;
         }
 
+        gst::error!(CAT, "Starting new pipeline");
         let pipeline = PooledPlayBin::new(uri, stream_type, stream_id);
         state.running_pipelines.push(pipeline.clone());
 
