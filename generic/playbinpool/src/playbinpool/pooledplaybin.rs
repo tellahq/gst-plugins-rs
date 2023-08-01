@@ -15,8 +15,8 @@ struct State {
 
 pub struct PooledPlayBin {
     pub pipeline: gst::Pipeline,
-    pub audio_sink: gst_app::AppSink,
-    pub video_sink: gst_app::AppSink,
+    pub uridecodebin: gst::Element,
+    pub sink: gst_app::AppSink,
     state: Mutex<State>,
     name: String,
 }
@@ -24,25 +24,23 @@ pub struct PooledPlayBin {
 impl Default for PooledPlayBin {
     fn default() -> Self {
         gst::error!(CAT, "Creating default playbin");
-        let mut pipeline_builder = gst::ElementFactory::make("playbin3")
-            .property("instant-uri", true);
+        let pipeline = gst::Pipeline::new();
 
-        let audio_sink = gst_app::AppSink::builder().sync(false).build();
-        let video_sink = gst_app::AppSink::builder().sync(false).build();
-        pipeline_builder = pipeline_builder
-            .property("video-sink", video_sink.clone())
-            .property( "audio-sink", audio_sink.clone());
-        let pipeline = pipeline_builder
-                .build()
-                .unwrap()
-                .downcast::<gst::Pipeline>()
-                .unwrap();
+        let uridecodebin = gst::ElementFactory::make("uridecodebin3")
+            .property("instant-uri", true)
+            .build()
+            .expect("Failed to create uridecodebin");
+
+        pipeline.add(&uridecodebin).unwrap();
+        let sink = gst_app::AppSink::builder().sync(false).build();
+        pipeline.add(&sink).unwrap();
+
 
         let name = pipeline.name().to_string();
         let this = Self {
             pipeline: pipeline.clone(),
-            audio_sink,
-            video_sink,
+            sink,
+            uridecodebin: uridecodebin.clone(),
             state: Mutex::new(State {
                 unused_since: None,
                 stream: None,
@@ -64,6 +62,19 @@ impl PartialEq for PooledPlayBin {
 }
 
 impl PooledPlayBin {
+    fn pad_added(&self, pad: &gst::Pad) {
+        gst::error!(CAT, "Pad added: {:?}", pad);
+        let sinkpad = self.sink.static_pad("sink").unwrap();
+        if sinkpad.is_linked() {
+            gst::error!(CAT, "Pad already linked");
+            return;
+        }
+
+        if let Err(err) = pad.link(&sinkpad) {
+            gst::error!(CAT, "Failed to link pads: {:?}", err);
+        }
+    }
+
     pub(crate) fn stream_type(&self) -> gst::StreamType {
         self.state.lock().unwrap().stream_type
     }
@@ -72,12 +83,8 @@ impl PooledPlayBin {
         self.state.lock().unwrap().stream_id.clone()
     }
 
-    pub(crate) fn video_sink(&self) -> gst_app::AppSink {
-        self.video_sink.clone()
-    }
-
-    pub(crate) fn audio_sink(&self) -> gst_app::AppSink {
-        self.audio_sink.clone()
+    pub(crate) fn sink(&self) -> gst_app::AppSink {
+        self.sink.clone()
     }
 
     pub(crate) fn pipeline(&self) -> gst::Pipeline {
@@ -86,12 +93,6 @@ impl PooledPlayBin {
 
     pub(crate) fn name(&self) -> &str {
         &self.name
-    }
-
-    fn configure_unused_sink(sink: &gst::Element) {
-        sink.set_property("enable-last-sample", false);
-        sink.set_property("max-buffers", 1u32);
-        sink.set_property("drop", true);
     }
 
     pub(crate) fn reset(&self, uri: &str, stream_type: gst::StreamType, stream_id: Option<&str>) {
@@ -109,12 +110,6 @@ impl PooledPlayBin {
         ));
 
         self.set_uri(uri);
-
-        Self::configure_unused_sink(&if stream_type == gst::StreamType::VIDEO {
-            self.pipeline.property::<gst::Element>("audio-sink")
-        } else {
-            self.pipeline.property::<gst::Element>("video-sink")
-        });
     }
 
     fn handle_bus_message(&self, message: &gst::Message) {
@@ -159,7 +154,8 @@ impl PooledPlayBin {
                 };
 
                 let _ = self.state.lock().unwrap().stream.insert(stream.clone());
-                self.pipeline.send_event(gst::event::SelectStreams::new(&[stream.stream_id().unwrap().as_str()]));
+                let uridecodebin = self.uridecodebin();
+                message.src().unwrap_or_else(|| uridecodebin.upcast_ref::<gst::Object>()).downcast_ref::<gst::Element>().unwrap().send_event(gst::event::SelectStreams::new(&[stream.stream_id().unwrap().as_str()]));
             }
             _ => (),
         }
@@ -173,8 +169,12 @@ impl PooledPlayBin {
         self.state.lock().unwrap().stream.clone()
     }
 
+    pub(crate) fn uridecodebin(&self) -> gst::Element {
+        self.uridecodebin.clone()
+    }
+
     fn set_uri(&self, uri: &str) {
-        self.pipeline.set_property("uri", uri);
+        self.uridecodebin.set_property("uri", uri);
     }
 
     pub(crate) fn play(&self) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
@@ -182,7 +182,7 @@ impl PooledPlayBin {
     }
 
     pub(crate) fn release(&self) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
-        self.pipeline.set_state(gst::State::Null)?;
+        self.pipeline.set_state(gst::State::Paused)?;
         let mut state = self.state.lock().unwrap();
         state.stream = None;
         drop(state);
@@ -193,7 +193,7 @@ impl PooledPlayBin {
     }
 
     pub(crate) fn stop(&self) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
-        gst::error!(CAT, "----> STOPPING");
+        gst::error!(CAT, imp: self, "----> STOPPING < ------------------------");
         if let Some(sigid) = self.state.lock().unwrap().bus_message_sigid.take() {
             self.pipeline.bus().unwrap().disconnect(sigid);
         }
@@ -216,7 +216,14 @@ impl PooledPlayBin {
     }
 }
 
-impl ObjectImpl for PooledPlayBin { }
+impl ObjectImpl for PooledPlayBin {
+    fn constructed(&self) {
+        self.uridecodebin.connect_pad_added(
+            glib::clone!(@weak self as this => move |_, pad| {
+                this.pad_added(pad);
+        }));
+    }
+}
 
 #[glib::object_subclass]
 impl ObjectSubclass for PooledPlayBin {
