@@ -79,7 +79,7 @@ impl PooledPlayBin {
         self.state.lock().unwrap().stream_type
     }
 
-    pub(crate) fn stream_id(&self) -> Option<String> {
+    pub(crate) fn requested_stream_id(&self) -> Option<String> {
         self.state.lock().unwrap().stream_id.clone()
     }
 
@@ -119,8 +119,7 @@ impl PooledPlayBin {
             gst::MessageView::StreamCollection(s) => {
                 let collection = s.stream_collection();
 
-                gst::error!(CAT, "{:?} Got collection {collection:?}", self.name);
-                let stream = if let Some(ref wanted_stream_id) = self.stream_id() {
+                let stream = if let Some(ref wanted_stream_id) = self.requested_stream_id() {
                     if let Some(stream) = collection.iter().find(|stream| {
                         let stream_id = stream.stream_id();
                         stream_id.map_or(false, |s| wanted_stream_id.as_str() == s.as_str())
@@ -129,7 +128,7 @@ impl PooledPlayBin {
 
                         Some(stream)
                     } else {
-                        gst::error!(CAT, "{:?} Stream not found: {}", self.name, wanted_stream_id);
+                        gst::error!(CAT, "{:?} requested stream {} not found in {}", self.name, wanted_stream_id, self.uridecodebin().property::<String>("uri"));
 
                         None
                     }
@@ -182,7 +181,7 @@ impl PooledPlayBin {
     }
 
     pub(crate) fn release(&self) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
-        self.pipeline.set_state(gst::State::Paused)?;
+        self.pipeline.set_state(gst::State::Null)?;
         let mut state = self.state.lock().unwrap();
         state.stream = None;
         drop(state);
@@ -203,16 +202,6 @@ impl PooledPlayBin {
 
     pub(crate) fn set_unused(&self) {
         self.state.lock().unwrap().unused_since = Some(std::time::Instant::now());
-    }
-
-    pub(crate) fn is_seekable(&self) -> bool {
-        let mut query = gst::query::Seeking::new(gst::Format::Time);
-        if self.pipeline.query(query.query_mut()) {
-            query.result().0
-        } else {
-            gst::warning!(CAT, "Failed to query seekability of playbin");
-            false
-        }
     }
 }
 

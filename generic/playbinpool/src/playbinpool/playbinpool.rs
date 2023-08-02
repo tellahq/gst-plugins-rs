@@ -99,15 +99,21 @@ impl PlaybinPool {
         let mut state = self.state.lock().unwrap();
 
         let playbin = if let Some(position) = state.unused_pipelines.iter().position(|p|
-            stream_id.is_some() && p.stream_id().map_or(false, |id| Some(id.as_str()) == stream_id)
+            stream_id.is_some() && p.requested_stream_id().map_or(false, |id| Some(id.as_str()) == stream_id)
         ) {
             gst::error!(CAT, "Reusing the exact same pipeline for {:?}", stream_id);
             Some(state.unused_pipelines.remove(position))
+        } else if let Some(position) = state.unused_pipelines.iter().position(|p|
+            p.uridecodebin().property::<Option<String>>("uri").map_or(false, |uri| uri.as_str() != uri)) {
+
+            gst::error!(CAT, "Using another pipeline which use another URI `uridecodebin3` won't allow use to switch stream-id for different media types yet");
+
+            Some(state.unused_pipelines.remove(position))
         } else {
-            state.unused_pipelines.pop()
+            None
         };
 
-        gst::error!(CAT, "Got playbin {:?}", playbin);
+        gst::error!(CAT, "Got playbin {:?}", playbin.as_ref().map(|p| p.imp().name()));
         if let Some(playbin) = playbin {
             playbin.reset(uri, stream_type, stream_id);
             state.running_pipelines.push(playbin.clone());
@@ -150,14 +156,14 @@ impl PlaybinPool {
     }
 
     pub(crate) fn release(&self, pipeline: PooledPlayBin) {
-        let mut state = self.state.lock().unwrap();
-        state.running_pipelines.retain(|p| p != &pipeline);
+        self.state.lock().unwrap().running_pipelines.retain(|p| p != &pipeline);
 
         if let Err(err) = pipeline.imp().release() {
             gst::error!(CAT, "Failed to release pipeline: {}", err);
         }
+
         pipeline.imp().set_unused();
-        state.unused_pipelines.push(pipeline);
+        self.state.lock().unwrap().unused_pipelines.push(pipeline);
 
         let cleanup_timeout = self.settings.lock().unwrap().cleanup_timeout.clone();
         RUNTIME.spawn(glib::clone!(@weak self as this => async move {
