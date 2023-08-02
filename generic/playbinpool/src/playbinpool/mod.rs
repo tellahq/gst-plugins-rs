@@ -38,8 +38,8 @@ glib::wrapper! {
 }
 
 impl PooledPlayBin {
-    pub(crate) fn stream_id(&self) -> Option<String> {
-        self.imp().stream_id()
+    pub(crate) fn requested_stream_id(&self) -> Option<String> {
+        self.imp().requested_stream_id()
     }
 
     pub(crate) fn sink(&self) -> gst_app::AppSink {
@@ -52,10 +52,6 @@ impl PooledPlayBin {
 
     pub(crate) fn reset(&self, uri: &str, stream_type: gst::StreamType, stream_id: Option<&str>) {
         self.imp().reset(uri, stream_type, stream_id);
-    }
-
-    pub(crate) fn is_seekable(&self) -> bool {
-        self.imp().is_seekable()
     }
 
     pub(crate) fn stream(&self) -> Option<gst::Stream> {
