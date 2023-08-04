@@ -259,21 +259,29 @@ impl PlaybinPoolSrc {
 
             let event = if obj.type_().is_a(gst::Event::static_type()) {
                 let event = obj.downcast_ref::<gst::Event>().unwrap();
-                gst::error!(CAT, imp: self, "Got event: {:?}", event);
-                if let gst::EventView::FlushStop(_) = event.view() {
-                    let mut state = self.state.lock().unwrap();
-                    if let Some(seq) = state.seek_seqnum.as_ref() {
-                        if &event.seqnum() == seq {
-                            gst::error!(CAT, imp: self, "Got FLUSH_STOP with right seqnum, restarting pushing buffers");
-                            let _ = state.seek_seqnum.take();
-                        } else {
-                            gst::error!(CAT, imp: self, "Got FLUSH_STOP with wrong seqnum");
-                        }
-                    }
+                gst::info!(CAT, imp: self, "Got event: {:?}", event);
+                match event.view() {
+                    gst::EventView::Tag(_) => {
+                        gst::error!(CAT, imp: self, "Got tag event, forwarding");
 
-                    continue;
-                } else {
-                    Some(event)
+                        self.obj().src_pad().push_event(event.to_owned());
+                        None
+                    }
+                    gst::EventView::FlushStop(_) => {
+
+                        let mut state = self.state.lock().unwrap();
+                        if let Some(seq) = state.seek_seqnum.as_ref() {
+                            if &event.seqnum() == seq {
+                                gst::error!(CAT, imp: self, "Got FLUSH_STOP with right seqnum, restarting pushing buffers");
+                                let _ = state.seek_seqnum.take();
+                            } else {
+                                gst::error!(CAT, imp: self, "Got FLUSH_STOP with wrong seqnum");
+                            }
+                        }
+
+                        continue;
+                    },
+                    _ => Some(event),
                 }
             } else {
                 None
