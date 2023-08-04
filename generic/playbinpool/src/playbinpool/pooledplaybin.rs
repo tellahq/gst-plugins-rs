@@ -10,7 +10,6 @@ struct State {
     stream_id: Option<String>,
     stream_type: gst::StreamType,
     unused_since: Option<std::time::Instant>,
-    bus_message_sigid: Option<glib::SignalHandlerId>,
 }
 
 pub struct PooledPlayBin {
@@ -57,7 +56,6 @@ impl Default for PooledPlayBin {
                 stream: None,
                 stream_id: None,
                 stream_type: gst::StreamType::VIDEO,
-                bus_message_sigid: None,
             }),
             name,
         };
@@ -114,61 +112,8 @@ impl PooledPlayBin {
         state.stream_type = stream_type;
         let bus = self.pipeline.bus().unwrap();
         bus.enable_sync_message_emission();
-        state.bus_message_sigid = Some(
-            bus.connect_sync_message(None, glib::clone!(@weak self as this => move |_, msg|
-                this.handle_bus_message(msg)
-            )
-        ));
 
         self.set_uri(uri);
-    }
-
-    fn handle_bus_message(&self, message: &gst::Message) {
-        let view = message.view();
-
-        match view {
-            gst::MessageView::StreamCollection(s) => {
-                let collection = s.stream_collection();
-
-                let stream = if let Some(ref wanted_stream_id) = self.requested_stream_id() {
-                    if let Some(stream) = collection.iter().find(|stream| {
-                        let stream_id = stream.stream_id();
-                        stream_id.map_or(false, |s| wanted_stream_id.as_str() == s.as_str())
-                    }) {
-                        gst::error!(CAT, "{:?} Selecting specified stream: {:?}", self.name, wanted_stream_id);
-
-                        Some(stream)
-                    } else {
-                        gst::error!(CAT, "{:?} requested stream {} not found in {}", self.name, wanted_stream_id, self.uridecodebin().property::<String>("uri"));
-
-                        None
-                    }
-                } else {
-                    None
-                };
-
-                let stream = if let Some(stream) = stream {
-                    stream
-                } else {
-                    if let Some(stream) = collection.iter().find(|stream|
-                            stream.stream_type() == self.stream_type() && stream.stream_id().is_some()
-                    ) {
-                        gst::error!(CAT, "{:?} Selecting stream: {:?}", self.name, stream.stream_id());
-                        stream
-                    } else {
-                        /* FIXME --- Post an error on the bus! */
-                        gst::error!(CAT, "{:?} No stream found for type: {:?}", self.name, self.stream_type());
-
-                        return;
-                    }
-                };
-
-                let _ = self.state.lock().unwrap().stream.insert(stream.clone());
-                let uridecodebin = self.uridecodebin();
-                message.src().unwrap_or_else(|| uridecodebin.upcast_ref::<gst::Object>()).downcast_ref::<gst::Element>().unwrap().send_event(gst::event::SelectStreams::new(&[stream.stream_id().unwrap().as_str()]));
-            }
-            _ => (),
-        }
     }
 
     pub(crate) fn unused_since(&self) -> Option<std::time::Instant> {
@@ -204,10 +149,6 @@ impl PooledPlayBin {
 
     pub(crate) fn stop(&self) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
         gst::error!(CAT, imp: self, "----> STOPPING < ------------------------");
-        if let Some(sigid) = self.state.lock().unwrap().bus_message_sigid.take() {
-            self.pipeline.bus().unwrap().disconnect(sigid);
-        }
-
         self.pipeline.set_state(gst::State::Null)
     }
 
@@ -222,6 +163,50 @@ impl ObjectImpl for PooledPlayBin {
             glib::clone!(@weak self as this => move |_, pad| {
                 this.pad_added(pad);
         }));
+
+        self.uridecodebin.connect_closure("select-stream", false,
+            glib::closure!(@weak-allow-none self as this => move |_db: gst::Element, collection: gst::StreamCollection, stream: gst::Stream| {
+                let this = this.unwrap();
+
+                if let Some(ref wanted_stream_id) = this.requested_stream_id() {
+                    if stream.stream_id().map_or(false, |sid| sid.as_str() == wanted_stream_id) {
+                        gst::error!(CAT, "{:?} Selecting specified stream: {:?}", this.name, wanted_stream_id);
+
+                        this.state.lock().unwrap().stream = Some(stream.clone());
+                        return 1 as i32;
+                    }
+
+                    if collection.iter().find(|potential_stream| {
+                        let stream_id = potential_stream.stream_id();
+                        stream_id.map_or(false, |s| wanted_stream_id.as_str() == s.as_str())
+                    }).is_some() {
+                        gst::error!(CAT, "{:?} Specified stream in collection, ignoring this one {:?}", this.name, wanted_stream_id);
+
+                        return 0;
+                    }
+                }
+
+                gst::error!(CAT, "Selecting the first stream of type: {:?}", this.stream_type());
+                if let Some(first_stream_of_type) = collection.iter().find(|s|
+                        s.stream_type() == this.stream_type() && s.stream_id().is_some()
+                ) {
+                    if stream == first_stream_of_type {
+                        gst::error!(CAT, "{:?} Selecting stream: {:?}", this.name, first_stream_of_type.stream_id());
+
+                        this.state.lock().unwrap().stream = Some(stream.clone());
+                        return 1 as i32;
+                    }
+
+                    gst::error!(CAT, "Waiting to select first stream of type: {:?}", this.stream_type());
+                } else {
+                    /* FIXME --- Post an error on the bus! */
+                    gst::error!(CAT, "{:?} No stream found for type: {:?}", this.name, this.stream_type());
+                }
+
+                return 0;
+            })
+        );
+
     }
 }
 
