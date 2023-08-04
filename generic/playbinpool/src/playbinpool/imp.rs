@@ -153,6 +153,12 @@ impl PlaybinPoolSrc {
         };
 
         match view {
+            gst::MessageView::Element(s) => {
+                gst::error!(CAT, "Got element message: {:?}", s);
+                if let Err(e) = self.obj().post_message(s.message().to_owned()) {
+                    gst::error!(CAT, imp: self, "Failed to post message: {e:?}");
+                }
+            },
             gst::MessageView::StateChanged(s) => {
                 if s.src() == Some(playbin.pipeline().upcast_ref()) {
                     if s.pending() == gst::State::VoidPending {
