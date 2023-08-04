@@ -29,7 +29,18 @@ impl Default for PooledPlayBin {
         let uridecodebin = gst::ElementFactory::make("uridecodebin3")
             .property("instant-uri", true)
             .build()
-            .expect("Failed to create uridecodebin");
+            .expect("Failed to create uridecodebin")
+            .downcast::<gst::Bin>()
+            .unwrap();
+
+        uridecodebin.connect_deep_element_added(|_, _, element| {
+            if element.factory() == gst::ElementFactory::find("multiqueue") {
+                // FIXME - in multiqueue fix the logic for pushing on unlinked pads
+                // so it doesn't wait forever in many of our case.
+                // We do not care about unlinked pads streams ourselves!
+                element.set_property("unlinked-cache-time", gst::ClockTime::from_seconds(86400));
+            }
+        });
 
         pipeline.add(&uridecodebin).unwrap();
         let sink = gst_app::AppSink::builder().sync(false).build();
@@ -40,7 +51,7 @@ impl Default for PooledPlayBin {
         let this = Self {
             pipeline: pipeline.clone(),
             sink,
-            uridecodebin: uridecodebin.clone(),
+            uridecodebin: uridecodebin.clone().upcast(),
             state: Mutex::new(State {
                 unused_since: None,
                 stream: None,
