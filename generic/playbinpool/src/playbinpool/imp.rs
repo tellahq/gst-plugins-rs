@@ -286,35 +286,6 @@ impl PlaybinPoolSrc {
 
             if let Some(event) = event {
                 match event.view() {
-                    // The segment we send needs to be exactly the one flowing
-                    // in the "upstream pipeline"
-                    gst::EventView::Segment(s) => {
-                        let mut state = self.state.lock().unwrap();
-                        let segment = s.segment();
-                        let segment_changed = state.segment.as_ref().clone() != Some(segment) && state.seek_seqnum.is_none();
-                        if segment_changed  {
-                            state.segment = Some(segment.to_owned());
-
-                            // Working around the base class setting a new
-                            // seqnum on the segment while in our case we want
-                            // to ensure seqnums between pipelines match
-                            state.segment_seqnum = Some(event.seqnum());
-                            drop(state);
-
-                            gst::error!(CAT, imp: self, "Sending segment: {:?}", segment);
-                            self.obj().new_segment(s.segment()).map_err(|e| {
-
-                                if self.state.lock().unwrap().flushing {
-                                    gst::error!(CAT, imp: self, "Failed to push segment {e:?} while flushing");
-                                    gst::FlowError::Flushing
-                                } else {
-                                    gst::error!(CAT, imp: self, "Failed to push segment {e:?}");
-                                    gst::FlowError::Error
-                                }
-                            })?;
-                            gst::error!(CAT, imp: self, "Done sending segment");
-                        }
-                    },
                     gst::EventView::Caps(c) => {
                         gst::error!(CAT, imp: self, "Got caps: {:?}", c.caps());
                         if matches!(event_type, Some(gst::EventType::Caps)) {
@@ -462,20 +433,17 @@ impl ObjectImpl for PlaybinPoolSrc {
                         probe_info.data = Some(gst::PadProbeData::Event(event_builder.build()));
                     },
                     gst::EventView::Segment(s) => {
-                        let segment = match this.process_objects(Some(gst::EventType::Segment)) {
-                            Ok(segment) => {
-                                segment.downcast::<gst::Event>().unwrap()
-                            },
-                            Err(e) => {
-                                gst::error!(CAT, imp: this, "Failed to get segment: {e:?}");
-
-                                probe_info.flow_res = Err(e);
-                                return gst::PadProbeReturn::Ok;
-                            }
-                        };
-
                         gst::error!(CAT, imp: this, "Got segment {s:?}");
-                        probe_info.data = Some(gst::PadProbeData::Event(segment));
+                        if let Some(seqnum) = this.state.lock().unwrap().segment_seqnum.as_ref() {
+                            let segment = s.segment();
+                            probe_info.data = Some(gst::PadProbeData::Event(
+                                gst::event::Segment::builder(segment)
+                                    .seqnum(seqnum.clone())
+                                    .running_time_offset(event.running_time_offset())
+                                    .build()));
+                        } else {
+                            gst::error!(CAT, imp: this, "Trying to push a segment before we received one, pushing it as is");
+                        }
                     },
                     _ => (),
                 }
@@ -562,6 +530,7 @@ impl BaseSrcImpl for PlaybinPoolSrc {
                 if values.1.contains(gst::SeekFlags::FLUSH){
                     gst::error!(CAT, imp: self, "Flushing seek... waiting for flush-stop with right seqnum restarting pushing buffers");
                     self.state.lock().unwrap().seek_seqnum = Some(seek_event.seqnum());
+                    self.state.lock().unwrap().segment_seqnum = Some(seek_event.seqnum());
                 }
 
                 values
@@ -656,6 +625,17 @@ impl BaseSrcImpl for PlaybinPoolSrc {
         _length: u32,
     ) -> Result<gst_base::subclass::base_src::CreateSuccess, gst::FlowError> {
         let sample = self.process_objects(None)?.downcast::<gst::Sample>().expect("Should always have a sample when not waiting for EOS");
+
+        if let Some(segment) = sample.segment() {
+            let mut state = self.state.lock().unwrap();
+            if Some(segment) != state.segment.as_ref() {
+                state.segment = Some(segment.to_owned());
+                drop(state);
+                gst::error!(CAT, "--> PUSHING segment {segment:?}");
+
+                self.obj().push_segment(segment);
+            }
+        }
 
         if let Some(buffer) = sample.buffer_owned() {
             gst::error!(CAT, imp: self, "Pushing buffer: {:?}", buffer);
