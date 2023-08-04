@@ -211,6 +211,11 @@ impl PlaybinPoolSrc {
 
 
         loop {
+            if self.state.lock().unwrap().flushing {
+                gst::error!(CAT, "Flushing...");
+                return Err(gst::FlowError::Flushing);
+            }
+
             if self.requested_stream_started(&playbin) && self.state.lock().unwrap().seek_seqnum.is_none() {
                 match event_type {
                     Some(gst::EventType::Caps) => {
