@@ -420,8 +420,8 @@ impl ObjectImpl for PlaybinPoolSrc {
                         let mut event_builder = gst::event::StreamStart::builder(
                                 settings.stream_id.as_ref().map_or_else(|| stream_id.as_str(), |id| {
                                     let pipeline = playbin.pipeline();
-                                    gst::debug_bin_to_dot_file_with_ts(&pipeline, gst::DebugGraphDetails::all(), &format!("{}-wrong-stream-id", this.obj().name()));
                                     if id.as_str() != stream_id.as_str() {
+                                        gst::debug_bin_to_dot_file_with_ts(&pipeline, gst::DebugGraphDetails::all(), &format!("{}-wrong-stream-id", this.obj().name()));
                                         gst::error!(CAT, imp: this, "Selected wrong stream ID {}, {} could probably not be found \
                                             FAKING selected stream ID", stream_id, id)
                                     }
@@ -644,7 +644,7 @@ impl BaseSrcImpl for PlaybinPoolSrc {
         }
 
         if let Some(buffer) = sample.buffer_owned() {
-            gst::error!(CAT, imp: self, "Pushing buffer: {:?}", buffer);
+            // gst::error!(CAT, imp: self, "Pushing buffer: {:?}", buffer);
             Ok(gst_base::subclass::base_src::CreateSuccess::NewBuffer(
                 buffer,
             ))
