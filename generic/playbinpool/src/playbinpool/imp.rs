@@ -394,6 +394,7 @@ impl ObjectImpl for PlaybinPoolSrc {
     fn constructed(&self) {
         self.obj().set_format(gst::Format::Time);
         self.obj().set_async(true);
+        self.obj().set_automatic_eos(false);
 
         self.obj().src_pad().add_probe(gst::PadProbeType::EVENT_DOWNSTREAM,
             glib::clone!(@weak self as this => @default-return gst::PadProbeReturn::Ok, move |_, probe_info| {
