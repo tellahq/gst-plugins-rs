@@ -136,16 +136,13 @@ impl PlaybinPoolSrc {
 
     fn handle_bus_message(&self, _bus: &gst::Bus, message: &gst::Message) {
         let view = message.view();
-        let playbin = {
+        let (playbin, start_completed) = {
             let state = self.state.lock().unwrap();
 
-            if state.start_completed {
-                return;
-            }
-
             if let Some(ref playbin) = state.playbin {
-                playbin.clone()
+                (playbin.clone(), state.start_completed)
             } else {
+                gst::debug!(CAT, imp: self, "Got message {:?} without playbin", message);
                 // We have been disconnected while we already entered the
                 // callback it seems
                 return;
@@ -154,16 +151,14 @@ impl PlaybinPoolSrc {
 
         match view {
             gst::MessageView::Element(s) => {
-                gst::error!(CAT, "Got element message: {:?}", s);
                 if let Err(e) = self.obj().post_message(s.message().to_owned()) {
-                    gst::error!(CAT, imp: self, "Failed to post message: {e:?}");
+                    gst::error!(CAT, imp: self, "Failed to forward message: {e:?}");
                 }
             },
             gst::MessageView::StateChanged(s) => {
-                if s.src() == Some(playbin.pipeline().upcast_ref()) {
+                if !start_completed && s.src() == Some(playbin.pipeline().upcast_ref()) {
                     if s.pending() == gst::State::VoidPending {
                         self.state.lock().unwrap().start_completed = true;
-                        gst::error!(CAT, imp: self, "--> STARTED {:?}", s.current());
                         self.obj().start_complete(gst::FlowReturn::Ok);
                     }
                 }
@@ -236,7 +231,7 @@ impl PlaybinPoolSrc {
             let is_eos = sink.is_eos();
             let obj = match sink.pull_object() {
                 Ok(obj) => {
-                    gst::error!(CAT, imp: self, "Got object: {:?}", obj);
+                    gst::info!(CAT, imp: self, "Got object: {:?}", obj);
                     Ok(obj)
                 },
                 Err(e) => {
