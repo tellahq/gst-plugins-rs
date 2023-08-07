@@ -11,6 +11,8 @@ struct State {
     stream_type: gst::StreamType,
     unused_since: Option<std::time::Instant>,
     bus_message_sigid: Option<glib::SignalHandlerId>,
+
+    target_src: Option<gst::Element>,
 }
 
 pub struct PooledPlayBin {
@@ -58,6 +60,7 @@ impl Default for PooledPlayBin {
                 stream_id: None,
                 stream_type: gst::StreamType::VIDEO,
                 bus_message_sigid: None,
+                target_src: None,
             }),
             name,
         };
@@ -191,6 +194,21 @@ impl PooledPlayBin {
         self.pipeline.set_state(gst::State::Playing)
     }
 
+    pub(crate) fn target_src(&self) -> Option<gst::Element> {
+        self.state.lock().unwrap().target_src.clone()
+    }
+
+    pub(crate) fn set_target_src(&self, target_src: Option<gst::Element>) {
+        let mut state = self.state.lock().unwrap();
+
+        if target_src.is_none() {
+            state.unused_since = Some(std::time::Instant::now());
+        } else {
+            state.unused_since = None;
+        }
+        state.target_src = target_src;
+    }
+
     pub(crate) fn release(&self) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
         self.pipeline.set_state(gst::State::Null)?;
         let mut state = self.state.lock().unwrap();
@@ -209,10 +227,6 @@ impl PooledPlayBin {
         }
 
         self.pipeline.set_state(gst::State::Null)
-    }
-
-    pub(crate) fn set_unused(&self) {
-        self.state.lock().unwrap().unused_since = Some(std::time::Instant::now());
     }
 }
 

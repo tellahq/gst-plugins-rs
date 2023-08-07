@@ -52,7 +52,7 @@ pub struct PlaybinPoolSrc {
     #[property(name = "stream-type", get, set, type = gst::StreamType, member = stream_type,
         blurb = "The type of stream to be used, this is only used of no `stream-id` is specified"
     )]
-    #[property(name = "stream-id", get, set, type = String, member = stream_id,
+    #[property(name = "stream-id", get, set, type = Option<String>, member = stream_id,
         flags = glib::ParamFlags::READWRITE | gst::PARAM_FLAG_MUTABLE_READY,
         blurb = "The stream-id of the stream to be used"
     )]
@@ -563,13 +563,9 @@ impl BaseSrcImpl for PlaybinPoolSrc {
     fn start(&self) -> Result<(), gst::ErrorMessage> {
         gst::error!(CAT, imp: self, "STARTING!!");
 
-        let settings = self.settings.lock().unwrap();
-        let playbin = if let Some(ref uri) = settings.uri.clone() {
-            let stream_id = settings.stream_id.clone();
-            let stream_type = settings.stream_type;
-            drop(settings);
-
-            self.pool.get_playbin(uri.as_str(), stream_type, stream_id.as_ref().map(|id| id.as_str()))
+        let has_uri = self.settings.lock().unwrap().uri.is_some();
+        let playbin = if has_uri {
+            self.pool.get_playbin(&*self.obj())
         } else {
             return Err(gst::error_msg!(
                 gst::ResourceError::Settings,
@@ -578,7 +574,6 @@ impl BaseSrcImpl for PlaybinPoolSrc {
         };
 
         self.set_playbin(&playbin);
-
         let res = playbin.imp().play().map_err(|err| {
             gst::error_msg!(
                 gst::ResourceError::Settings,
