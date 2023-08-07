@@ -74,21 +74,18 @@ impl ObjectImpl for PlaybinPool {
 
     fn signals() -> &'static [glib::subclass::Signal] {
         static SIGNALS: Lazy<Vec<glib::subclass::Signal>> = Lazy::new(|| {
-        vec![
-            glib::subclass::Signal::builder("prepare-pipeline")
-                    .flags(glib::SignalFlags::ACTION)
-                    .param_types([
-                        str::static_type(),
-                    ])
-                    .class_handler(|_, args| {
-                        let pool = args[0].get::<super::PlaybinPool>().unwrap();
-                        let src = args[2].get::<&super::PlaybinPoolSrc>().unwrap();
+            vec![glib::subclass::Signal::builder("prepare-pipeline")
+                .flags(glib::SignalFlags::ACTION)
+                .param_types([str::static_type()])
+                .class_handler(|_, args| {
+                    let pool = args[0].get::<super::PlaybinPool>().unwrap();
+                    let src = args[2].get::<&super::PlaybinPoolSrc>().unwrap();
 
-                        pool.imp().prepare_pipeline(src);
-                        None
-                    })
-                    .build()
-        ]});
+                    pool.imp().prepare_pipeline(src);
+                    None
+                })
+                .build()]
+        });
 
         SIGNALS.as_ref()
     }
@@ -120,20 +117,24 @@ impl PlaybinPool {
     }
 
     pub(crate) fn get(&self, src: &super::PlaybinPoolSrc) -> PooledPlayBin {
-        let uri =  src.uri();
-        let stream_type =  src.stream_type();
-        let stream_id =  src.stream_id();
+        let uri = src.uri();
+        let stream_type = src.stream_type();
+        let stream_id = src.stream_id();
         gst::error!(CAT, "BUT YES BABY Getting pipeline for {uri}");
         let mut state = self.state.lock().unwrap();
 
-        let playbin = if let Some(position) = state.unused_pipelines.iter().position(|p|
-            stream_id.is_some() && p.requested_stream_id().map_or(false, |id| Some(id) == stream_id)
-        ) {
+        let playbin = if let Some(position) = state.unused_pipelines.iter().position(|p| {
+            stream_id.is_some()
+                && p.requested_stream_id()
+                    .map_or(false, |id| Some(id) == stream_id)
+        }) {
             gst::error!(CAT, "Reusing the exact same pipeline for {:?}", stream_id);
             Some(state.unused_pipelines.remove(position))
-        } else if let Some(position) = state.unused_pipelines.iter().position(|p|
-            p.uridecodebin().property::<Option<String>>("uri").map_or(false, |uri| uri.as_str() != uri)) {
-
+        } else if let Some(position) = state.unused_pipelines.iter().position(|p| {
+            p.uridecodebin()
+                .property::<Option<String>>("uri")
+                .map_or(false, |uri| uri.as_str() != uri)
+        }) {
             gst::error!(CAT, "Using another pipeline which use another URI `uridecodebin3` won't allow use to switch stream-id for different media types yet");
 
             Some(state.unused_pipelines.remove(position))
@@ -141,18 +142,37 @@ impl PlaybinPool {
             None
         };
 
-        gst::error!(CAT, "Got playbin {:?}", playbin.as_ref().map(|p| p.imp().name()));
+        gst::error!(
+            CAT,
+            "Got playbin {:?}",
+            playbin.as_ref().map(|p| p.imp().name())
+        );
         if let Some(playbin) = playbin {
-            playbin.reset(uri.as_ref(), stream_type, stream_id.as_ref().map(|s| s.as_str()));
+            playbin.reset(
+                uri.as_ref(),
+                stream_type,
+                stream_id.as_ref().map(|s| s.as_str()),
+            );
             state.running_pipelines.push(playbin.clone());
 
-            gst::error!(CAT, "----> Reusing existing pipeline: {:?} - {:?}", playbin, playbin.pipeline().state(Some(gst::ClockTime::from_mseconds(0))));
+            gst::error!(
+                CAT,
+                "----> Reusing existing pipeline: {:?} - {:?}",
+                playbin,
+                playbin
+                    .pipeline()
+                    .state(Some(gst::ClockTime::from_mseconds(0)))
+            );
 
             return playbin;
         }
 
         gst::error!(CAT, "Starting new pipeline");
-        let pipeline = PooledPlayBin::new(uri.as_ref(), stream_type, stream_id.as_ref().map(|s| s.as_str()));
+        let pipeline = PooledPlayBin::new(
+            uri.as_ref(),
+            stream_type,
+            stream_id.as_ref().map(|s| s.as_str()),
+        );
         state.running_pipelines.push(pipeline.clone());
 
         pipeline
@@ -163,7 +183,8 @@ impl PlaybinPool {
         let mut state = self.state.lock().unwrap();
 
         state.unused_pipelines.retain(|p| {
-            if p.imp().unused_since()
+            if p.imp()
+                .unused_since()
                 .expect(
                     "Pipeline without unused_since set shouldn't be in the unused_pipelines list",
                 )
@@ -184,7 +205,11 @@ impl PlaybinPool {
     }
 
     pub(crate) fn release(&self, pipeline: PooledPlayBin) {
-        self.state.lock().unwrap().running_pipelines.retain(|p| p != &pipeline);
+        self.state
+            .lock()
+            .unwrap()
+            .running_pipelines
+            .retain(|p| p != &pipeline);
 
         if let Err(err) = pipeline.imp().release() {
             gst::error!(CAT, "Failed to release pipeline: {}", err);

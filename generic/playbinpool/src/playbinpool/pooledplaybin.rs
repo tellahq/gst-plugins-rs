@@ -1,6 +1,6 @@
 use std::sync::Mutex;
 
-use gst::{glib, subclass::prelude::*, prelude::*};
+use gst::{glib, prelude::*, subclass::prelude::*};
 
 use super::playbinpool::CAT;
 
@@ -47,7 +47,6 @@ impl Default for PooledPlayBin {
         pipeline.add(&uridecodebin).unwrap();
         let sink = gst_app::AppSink::builder().sync(false).build();
         pipeline.add(&sink).unwrap();
-
 
         let name = pipeline.name().to_string();
         let this = Self {
@@ -117,10 +116,11 @@ impl PooledPlayBin {
         state.stream_type = stream_type;
         let bus = self.pipeline.bus().unwrap();
         bus.enable_sync_message_emission();
-        state.bus_message_sigid = Some(
-            bus.connect_sync_message(None, glib::clone!(@weak self as this => move |_, msg|
+        state.bus_message_sigid = Some(bus.connect_sync_message(
+            None,
+            glib::clone!(@weak self as this => move |_, msg|
                 this.handle_bus_message(msg)
-            )
+            ),
         ));
 
         self.set_uri(uri);
@@ -138,11 +138,22 @@ impl PooledPlayBin {
                         let stream_id = stream.stream_id();
                         stream_id.map_or(false, |s| wanted_stream_id.as_str() == s.as_str())
                     }) {
-                        gst::error!(CAT, "{:?} Selecting specified stream: {:?}", self.name, wanted_stream_id);
+                        gst::error!(
+                            CAT,
+                            "{:?} Selecting specified stream: {:?}",
+                            self.name,
+                            wanted_stream_id
+                        );
 
                         Some(stream)
                     } else {
-                        gst::error!(CAT, "{:?} requested stream {} not found in {}", self.name, wanted_stream_id, self.uridecodebin().property::<String>("uri"));
+                        gst::error!(
+                            CAT,
+                            "{:?} requested stream {} not found in {}",
+                            self.name,
+                            wanted_stream_id,
+                            self.uridecodebin().property::<String>("uri")
+                        );
 
                         None
                     }
@@ -153,14 +164,24 @@ impl PooledPlayBin {
                 let stream = if let Some(stream) = stream {
                     stream
                 } else {
-                    if let Some(stream) = collection.iter().find(|stream|
-                            stream.stream_type() == self.stream_type() && stream.stream_id().is_some()
-                    ) {
-                        gst::error!(CAT, "{:?} Selecting stream: {:?}", self.name, stream.stream_id());
+                    if let Some(stream) = collection.iter().find(|stream| {
+                        stream.stream_type() == self.stream_type() && stream.stream_id().is_some()
+                    }) {
+                        gst::error!(
+                            CAT,
+                            "{:?} Selecting stream: {:?}",
+                            self.name,
+                            stream.stream_id()
+                        );
                         stream
                     } else {
                         /* FIXME --- Post an error on the bus! */
-                        gst::error!(CAT, "{:?} No stream found for type: {:?}", self.name, self.stream_type());
+                        gst::error!(
+                            CAT,
+                            "{:?} No stream found for type: {:?}",
+                            self.name,
+                            self.stream_type()
+                        );
 
                         return;
                     }
@@ -168,7 +189,15 @@ impl PooledPlayBin {
 
                 let _ = self.state.lock().unwrap().stream.insert(stream.clone());
                 let uridecodebin = self.uridecodebin();
-                message.src().unwrap_or_else(|| uridecodebin.upcast_ref::<gst::Object>()).downcast_ref::<gst::Element>().unwrap().send_event(gst::event::SelectStreams::new(&[stream.stream_id().unwrap().as_str()]));
+                message
+                    .src()
+                    .unwrap_or_else(|| uridecodebin.upcast_ref::<gst::Object>())
+                    .downcast_ref::<gst::Element>()
+                    .unwrap()
+                    .send_event(gst::event::SelectStreams::new(&[stream
+                        .stream_id()
+                        .unwrap()
+                        .as_str()]));
             }
             _ => (),
         }
@@ -216,7 +245,8 @@ impl PooledPlayBin {
         drop(state);
 
         gst::debug!(CAT, "Releasing pipeline {}", self.name);
-        self.pipeline.debug_to_dot_file_with_ts(gst::DebugGraphDetails::ALL, "releasing");
+        self.pipeline
+            .debug_to_dot_file_with_ts(gst::DebugGraphDetails::ALL, "releasing");
         Ok(gst::StateChangeSuccess::Success)
     }
 
@@ -232,10 +262,10 @@ impl PooledPlayBin {
 
 impl ObjectImpl for PooledPlayBin {
     fn constructed(&self) {
-        self.uridecodebin.connect_pad_added(
-            glib::clone!(@weak self as this => move |_, pad| {
-                this.pad_added(pad);
-        }));
+        self.uridecodebin
+            .connect_pad_added(glib::clone!(@weak self as this => move |_, pad| {
+                    this.pad_added(pad);
+            }));
     }
 }
 

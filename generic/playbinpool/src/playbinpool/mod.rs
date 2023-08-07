@@ -19,10 +19,7 @@ glib::wrapper! {
 }
 
 impl PlaybinPool {
-    pub(crate) fn get_playbin(
-        &self,
-        src: &PlaybinPoolSrc,
-    ) -> PooledPlayBin {
+    pub(crate) fn get_playbin(&self, src: &PlaybinPoolSrc) -> PooledPlayBin {
         self.imp().get(src)
     }
 
@@ -71,7 +68,6 @@ impl PooledPlayBin {
 
         this
     }
-
 }
 
 pub fn register(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
