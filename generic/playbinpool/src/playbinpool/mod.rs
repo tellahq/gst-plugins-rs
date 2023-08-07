@@ -21,11 +21,9 @@ glib::wrapper! {
 impl PlaybinPool {
     pub(crate) fn get_playbin(
         &self,
-        uri: &str,
-        stream_type: gst::StreamType,
-        stream_id: Option<&str>,
+        src: &PlaybinPoolSrc,
     ) -> PooledPlayBin {
-        self.imp().get(uri, stream_type, stream_id)
+        self.imp().get(src)
     }
 
     pub(crate) fn release(&self, playbin: PooledPlayBin) {
