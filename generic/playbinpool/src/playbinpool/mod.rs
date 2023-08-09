@@ -5,7 +5,7 @@ use gst::prelude::*;
 use gst::subclass::prelude::*;
 
 mod imp;
-mod playbinpool;
+mod pool;
 mod pooledplaybin;
 
 glib::wrapper! {
@@ -15,7 +15,7 @@ glib::wrapper! {
 }
 
 glib::wrapper! {
-    pub struct PlaybinPool(ObjectSubclass<playbinpool::PlaybinPool>);
+    pub struct PlaybinPool(ObjectSubclass<pool::PlaybinPool>);
 }
 
 impl PlaybinPool {
