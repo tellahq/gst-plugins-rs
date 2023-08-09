@@ -20,6 +20,9 @@ pub struct PooledPlayBin {
     pub uridecodebin: gst::Element,
     pub sink: gst_app::AppSink,
     state: Mutex<State>,
+    // Working around https://gitlab.freedesktop.org/gstreamer/gstreamer/-/issues/150 by
+    // ensuring we do not send `SELECT_STREAM` while tearing down
+    state_lock: Mutex<bool>,
     name: String,
 }
 
@@ -61,6 +64,7 @@ impl Default for PooledPlayBin {
                 bus_message_sigid: None,
                 target_src: None,
             }),
+            state_lock: Mutex::new(false),
             name,
         }
     }
@@ -186,15 +190,18 @@ impl PooledPlayBin {
 
             let _ = self.state.lock().unwrap().stream.insert(stream.clone());
             let uridecodebin = self.uridecodebin();
-            message
-                .src()
-                .unwrap_or_else(|| uridecodebin.upcast_ref::<gst::Object>())
-                .downcast_ref::<gst::Element>()
-                .unwrap()
-                .send_event(gst::event::SelectStreams::new(&[stream
-                    .stream_id()
+
+            if let Ok(_state_lock) = self.state_lock.try_lock() {
+                message
+                    .src()
+                    .unwrap_or_else(|| uridecodebin.upcast_ref::<gst::Object>())
+                    .downcast_ref::<gst::Element>()
                     .unwrap()
-                    .as_str()]));
+                    .send_event(gst::event::SelectStreams::new(&[stream
+                        .stream_id()
+                        .unwrap()
+                        .as_str()]));
+            }
         }
     }
 
@@ -215,6 +222,7 @@ impl PooledPlayBin {
     }
 
     pub(crate) fn play(&self) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
+        let _ = self.state_lock.lock();
         self.pipeline.set_state(gst::State::Playing)
     }
 
@@ -236,11 +244,10 @@ impl PooledPlayBin {
     pub(crate) fn release(&self) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
         self.set_target_src(None);
 
-        self.pipeline.call_async(|pipeline| {
-            if let Err(err) = pipeline.set_state(gst::State::Null) {
-                gst::error!(CAT, obj: pipeline, "Could not teardown pipeline {err:?}");
-            }
-        });
+        let _ = self.state_lock.lock();
+        if let Err(err) = self.pipeline.set_state(gst::State::Null) {
+            gst::error!(CAT, obj: self.pipeline, "Could not teardown pipeline {err:?}");
+        }
         let mut state = self.state.lock().unwrap();
         state.stream = None;
         drop(state);
@@ -257,6 +264,7 @@ impl PooledPlayBin {
             self.pipeline.bus().unwrap().disconnect(sigid);
         }
 
+        let _ = self.state_lock.lock();
         self.pipeline.set_state(gst::State::Null)
     }
 }

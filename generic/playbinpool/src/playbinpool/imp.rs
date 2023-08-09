@@ -266,7 +266,7 @@ impl PlaybinPoolSrc {
             let is_eos = sink.is_eos();
             let obj = match sink.pull_object() {
                 Ok(obj) => {
-                    gst::info!(CAT, imp: self, "Got object: {:?}", obj);
+                    gst::log!(CAT, imp: self, "Got object: {:?}", obj);
                     Ok(obj)
                 }
                 Err(e) => {
@@ -278,7 +278,7 @@ impl PlaybinPoolSrc {
                             continue;
                         }
 
-                        gst::log!(CAT, imp: self, "Got EOS");
+                        gst::debug!(CAT, imp: self, "Got EOS");
                         return Err(gst::FlowError::Eos);
                     }
 
@@ -298,7 +298,7 @@ impl PlaybinPoolSrc {
 
             let event = if obj.type_().is_a(gst::Event::static_type()) {
                 let event = obj.downcast_ref::<gst::Event>().unwrap();
-                gst::info!(CAT, imp: self, "Got event: {:?}", event);
+                gst::debug!(CAT, imp: self, "Got event: {:?}", event);
                 match event.view() {
                     gst::EventView::Tag(_) => {
                         gst::log!(CAT, imp: self, "Got tag event, forwarding");
