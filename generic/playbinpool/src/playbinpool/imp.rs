@@ -126,7 +126,7 @@ impl PlaybinPoolSrc {
         let dot_file = DUMPDOT_DIR.as_ref().unwrap().join(&fname);
         let mut file = std::fs::File::create(dot_file.clone())
             .map_err(|e| {
-                gst::error!(CAT, "Could not create dot file: {e:?}");
+                gst::warning!(CAT, "Could not create dot file: {e:?}");
                 e
             })
             .ok()?;
@@ -135,7 +135,7 @@ impl PlaybinPoolSrc {
             gst::debug_bin_to_dot_data(&pipeline, gst::DebugGraphDetails::all()).as_bytes(),
         )
         .map_err(|e| {
-            gst::error!(CAT, imp: self, "Failed to write dot file: {e:?}");
+            gst::warning!(CAT, imp: self, "Failed to write dot file: {e:?}");
 
             e
         })
@@ -162,7 +162,7 @@ impl PlaybinPoolSrc {
         match view {
             gst::MessageView::Element(s) => {
                 if let Err(e) = self.obj().post_message(s.message().to_owned()) {
-                    gst::error!(CAT, imp: self, "Failed to forward message: {e:?}");
+                    gst::warning!(CAT, imp: self, "Failed to forward message: {e:?}");
                 }
             }
             gst::MessageView::StateChanged(s) => {
@@ -183,7 +183,7 @@ impl PlaybinPoolSrc {
         let selected_stream = match playbin.stream() {
             Some(stream) => stream.stream_id(),
             None => {
-                gst::error!(CAT, imp: self, "No stream selected yet");
+                gst::info!(CAT, imp: self, "No stream selected yet");
                 return false;
             }
         }
@@ -197,7 +197,7 @@ impl PlaybinPoolSrc {
             .stream_id()
             .map_or(false, |id| {
                 if id.as_str() != selected_stream.as_str() {
-                    gst::error!(
+                    gst::info!(
                         CAT,
                         imp: self,
                         "(Still?) Using wrong stream {} instead of selected: {} - dropping",
@@ -236,7 +236,7 @@ impl PlaybinPoolSrc {
 
         loop {
             if self.state.lock().unwrap().flushing {
-                gst::error!(CAT, "Flushing...");
+                gst::debug!(CAT, "Flushing...");
                 return Err(gst::FlowError::Flushing);
             }
 
@@ -273,16 +273,16 @@ impl PlaybinPoolSrc {
                     // between the pull and now
                     if is_eos || sink.is_eos() {
                         if self.state.lock().unwrap().seek_seqnum.is_some() {
-                            gst::error!(CAT, imp: self, "Got EOS while waiting for FLUSH_STOP");
+                            gst::debug!(CAT, imp: self, "Got EOS while waiting for FLUSH_STOP");
                             continue;
                         }
 
-                        gst::error!(CAT, imp: self, "Got EOS");
+                        gst::log!(CAT, imp: self, "Got EOS");
                         return Err(gst::FlowError::Eos);
                     }
 
                     if self.state.lock().unwrap().flushing {
-                        gst::error!(
+                        gst::debug!(
                             CAT,
                             imp: self,
                             "Got error while flushing: {e:?} -> returning flushing"
@@ -300,7 +300,7 @@ impl PlaybinPoolSrc {
                 gst::info!(CAT, imp: self, "Got event: {:?}", event);
                 match event.view() {
                     gst::EventView::Tag(_) => {
-                        gst::error!(CAT, imp: self, "Got tag event, forwarding");
+                        gst::log!(CAT, imp: self, "Got tag event, forwarding");
 
                         self.obj().src_pad().push_event(event.to_owned());
                         None
@@ -309,14 +309,14 @@ impl PlaybinPoolSrc {
                         let mut state = self.state.lock().unwrap();
                         if let Some(seq) = state.seek_seqnum.as_ref() {
                             if &event.seqnum() == seq {
-                                gst::error!(
+                                gst::info!(
                                     CAT,
                                     imp: self,
                                     "Got FLUSH_STOP with right seqnum, restarting pushing buffers"
                                 );
                                 let _ = state.seek_seqnum.take();
                             } else {
-                                gst::error!(CAT, imp: self, "Got FLUSH_STOP with wrong seqnum");
+                                gst::info!(CAT, imp: self, "Got FLUSH_STOP with wrong seqnum");
                             }
                         }
 
@@ -329,14 +329,14 @@ impl PlaybinPoolSrc {
             };
 
             if !self.requested_stream_started(&playbin) {
-                gst::error!(CAT, imp: self, "Got {obj:?} from wrong stream, dropping");
+                gst::info!(CAT, imp: self, "Got {obj:?} from wrong stream, dropping");
                 continue;
             }
 
             if let Some(event) = event {
                 match event.view() {
                     gst::EventView::Caps(c) => {
-                        gst::error!(CAT, imp: self, "Got caps: {:?}", c.caps());
+                        gst::log!(CAT, imp: self, "Got caps: {:?}", c.caps());
                         if matches!(event_type, Some(gst::EventType::Caps)) {
                             return return_func(self, c.caps().to_owned().upcast());
                         }
@@ -345,7 +345,7 @@ impl PlaybinPoolSrc {
                 }
             } else if obj.type_().is_a(gst::Sample::static_type()) {
                 if event_type.is_some() {
-                    gst::error!(
+                    gst::debug!(
                         CAT,
                         imp: self,
                         "Got sample while waiting for caps, dropping"
@@ -354,7 +354,7 @@ impl PlaybinPoolSrc {
                 }
 
                 if self.state.lock().unwrap().seek_seqnum.is_some() {
-                    gst::error!(
+                    gst::info!(
                         CAT,
                         imp: self,
                         "Got sample while waiting for FLUSH_STOP, dropping"
@@ -461,12 +461,12 @@ impl ObjectImpl for PlaybinPoolSrc {
                         let stream = if let Some (stream) = playbin.stream() {
                             stream
                         } else {
-                            gst::error!(CAT, imp: this, "StreamStart event without stream");
+                            gst::info!(CAT, imp: this, "StreamStart event without stream");
                             return gst::PadProbeReturn::Ok;
                         };
 
                         let stream_id = stream.stream_id().unwrap();
-                        gst::error!(CAT, imp: this, "{:?} ++++> Got stream: {:?} {}", playbin, stream.stream_type(), stream_id);
+                        gst::debug!(CAT, imp: this, "{:?} ++++> Got stream: {:?} {}", playbin, stream.stream_type(), stream_id);
 
                         let settings = this.settings.lock().unwrap();
                         let mut event_builder = gst::event::StreamStart::builder(
@@ -474,7 +474,7 @@ impl ObjectImpl for PlaybinPoolSrc {
                                     let pipeline = playbin.pipeline();
                                     if id.as_str() != stream_id.as_str() {
                                         gst::debug_bin_to_dot_file_with_ts(&pipeline, gst::DebugGraphDetails::all(), &format!("{}-wrong-stream-id", this.obj().name()));
-                                        gst::error!(CAT, imp: this, "Selected wrong stream ID {}, {} could probably not be found \
+                                        gst::info!(CAT, imp: this, "Selected wrong stream ID {}, {} could probably not be found \
                                             FAKING selected stream ID", stream_id, id)
                                     }
 
@@ -491,7 +491,7 @@ impl ObjectImpl for PlaybinPoolSrc {
                         probe_info.data = Some(gst::PadProbeData::Event(event_builder.build()));
                     },
                     gst::EventView::Segment(s) => {
-                        gst::error!(CAT, imp: this, "Got segment {s:?}");
+                        gst::log!(CAT, imp: this, "Got segment {s:?}");
                         if let Some(seqnum) = this.state.lock().unwrap().segment_seqnum.as_ref() {
                             let segment = s.segment();
                             probe_info.data = Some(gst::PadProbeData::Event(
@@ -500,7 +500,7 @@ impl ObjectImpl for PlaybinPoolSrc {
                                     .running_time_offset(event.running_time_offset())
                                     .build()));
                         } else {
-                            gst::error!(CAT, imp: this, "Trying to push a segment before we received one, pushing it as is");
+                            gst::debug!(CAT, imp: this, "Trying to push a segment before we received one, pushing it as is");
                         }
                     },
                     _ => (),
@@ -554,14 +554,14 @@ impl BaseSrcImpl for PlaybinPoolSrc {
     }
 
     fn unlock_stop(&self) -> Result<(), gst::ErrorMessage> {
-        gst::error!(CAT, imp: self, "Stop flushing!");
+        gst::debug!(CAT, imp: self, "Stop flushing!");
         self.state.lock().unwrap().flushing = false;
 
         Ok(())
     }
 
     fn unlock(&self) -> Result<(), gst::ErrorMessage> {
-        gst::error!(CAT, imp: self, "START flushing!");
+        gst::debug!(CAT, imp: self, "START flushing!");
         self.state.lock().unwrap().flushing = true;
 
         Ok(())
@@ -572,7 +572,7 @@ impl BaseSrcImpl for PlaybinPoolSrc {
         let seek_event = if let Some(seek_event) = state.seek_event.take() {
             seek_event
         } else {
-            gst::error!(CAT, imp: self, "Ignoring initial seek");
+            gst::debug!(CAT, imp: self, "Ignoring initial seek");
 
             return true;
         };
@@ -582,11 +582,11 @@ impl BaseSrcImpl for PlaybinPoolSrc {
         if let Some(playbin) = playbin {
             let pipeline = playbin.pipeline();
 
-            gst::error!(CAT, imp: self, "Seeking to {segment:?}");
+            gst::info!(CAT, imp: self, "Seeking to {segment:?}");
             if let gst::EventView::Seek(s) = seek_event.view() {
                 let values = s.get();
                 if values.1.contains(gst::SeekFlags::FLUSH) {
-                    gst::error!(CAT, imp: self, "Flushing seek... waiting for flush-stop with right seqnum restarting pushing buffers");
+                    gst::debug!(CAT, imp: self, "Flushing seek... waiting for flush-stop with right seqnum restarting pushing buffers");
                     self.state.lock().unwrap().seek_seqnum = Some(seek_event.seqnum());
                     self.state.lock().unwrap().segment_seqnum = Some(seek_event.seqnum());
                 }
@@ -596,7 +596,7 @@ impl BaseSrcImpl for PlaybinPoolSrc {
                 unreachable!();
             };
 
-            gst::error!(
+            gst::debug!(
                 CAT,
                 imp: self,
                 "Sending {seek_event:?} to {}",
@@ -608,14 +608,14 @@ impl BaseSrcImpl for PlaybinPoolSrc {
             }
             true
         } else {
-            gst::error!(CAT, imp: self, "No pipeline to seek");
+            gst::info!(CAT, imp: self, "No pipeline to seek");
 
             false
         }
     }
 
     fn start(&self) -> Result<(), gst::ErrorMessage> {
-        gst::error!(CAT, imp: self, "STARTING!!");
+        gst::debug!(CAT, imp: self, "Starting");
 
         let has_uri = self.settings.lock().unwrap().uri.is_some();
         let playbin = if has_uri {
@@ -635,11 +635,11 @@ impl BaseSrcImpl for PlaybinPoolSrc {
             )
         })?;
         if res == gst::StateChangeSuccess::Success {
-            gst::error!(CAT, imp: self, "PLAYING!!");
+            gst::debug!(CAT, imp: self, "Playing");
             self.obj().start_complete(gst::FlowReturn::Ok);
         } else {
             let settings = self.settings.lock().unwrap();
-            gst::error!(
+            gst::debug!(
                 CAT,
                 imp: self,
                 "{:?} - {:?} Waiting {} state to be reached after {res:?}",
@@ -667,7 +667,7 @@ impl BaseSrcImpl for PlaybinPoolSrc {
                 |caps| Ok(caps.downcast::<gst::Caps>().unwrap()),
             )?;
 
-        gst::error!(CAT, imp: self, "Negotiated caps: {:?}", caps);
+        gst::debug!(CAT, imp: self, "Negotiated caps: {:?}", caps);
         self.obj()
             .set_caps(&caps)
             .map_err(|_| gst::loggable_error!(CAT, "Failed to negotiate caps",))
@@ -676,7 +676,7 @@ impl BaseSrcImpl for PlaybinPoolSrc {
     fn event(&self, event: &gst::Event) -> bool {
         match event.view() {
             gst::EventView::Seek(_s) => {
-                gst::error!(CAT, imp: self, "---> SEEKING!");
+                gst::debug!(CAT, imp: self, "Seeking");
 
                 self.state.lock().unwrap().seek_event = Some(event.clone())
             }
@@ -702,14 +702,14 @@ impl BaseSrcImpl for PlaybinPoolSrc {
             if Some(segment) != state.segment.as_ref() {
                 state.segment = Some(segment.to_owned());
                 drop(state);
-                gst::error!(CAT, "--> PUSHING segment {segment:?}");
+                gst::debug!(CAT, "Pushing segment {segment:?}");
 
                 self.obj().push_segment(segment);
             }
         }
 
         if let Some(buffer) = sample.buffer_owned() {
-            // gst::error!(CAT, imp: self, "Pushing buffer: {:?}", buffer);
+            gst::trace!(CAT, imp: self, "Pushing buffer: {:?}", buffer);
             Ok(gst_base::subclass::base_src::CreateSuccess::NewBuffer(
                 buffer,
             ))
@@ -725,7 +725,7 @@ impl BaseSrcImpl for PlaybinPoolSrc {
     }
 
     fn stop(&self) -> Result<(), gst::ErrorMessage> {
-        gst::error!(CAT, imp: self, "STOPPING");
+        gst::debug!(CAT, imp: self, "Stopping");
         let pipeline = {
             let mut state = self.state.lock().unwrap();
 
@@ -748,7 +748,7 @@ impl BaseSrcImpl for PlaybinPoolSrc {
             state.start_completed = false;
             state.playbin.take().unwrap()
         };
-        gst::error!(CAT, imp: self, "Releasing {pipeline:?}");
+        gst::info!(CAT, imp: self, "Releasing {pipeline:?}");
         self.pool.release(pipeline);
 
         Ok(())
