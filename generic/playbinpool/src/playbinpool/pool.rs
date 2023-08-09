@@ -136,6 +136,8 @@ impl PlaybinPool {
             .position(|p| p.imp().target_src().as_ref() == Some(src))
         {
             let pipeline = state.prepared_pipelines.remove(position);
+            drop(state);
+
             if let Err(err) = pipeline.imp().release() {
                 gst::error!(CAT, "Failed to release pipeline: {}", err);
             }

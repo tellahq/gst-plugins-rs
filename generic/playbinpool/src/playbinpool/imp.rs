@@ -633,7 +633,8 @@ impl BaseSrcImpl for PlaybinPoolSrc {
             )
         })?;
         if res == gst::StateChangeSuccess::Success {
-            gst::debug!(CAT, imp: self, "Playing");
+            gst::debug!(CAT, imp: self, "Already ready");
+            self.state.lock().unwrap().start_completed = true;
             self.obj().start_complete(gst::FlowReturn::Ok);
         } else {
             let settings = self.settings.lock().unwrap();
@@ -725,7 +726,6 @@ impl BaseSrcImpl for PlaybinPoolSrc {
             let mut state = self.state.lock().unwrap();
 
             state.segment = None;
-            state.start_completed = false;
             state.seek_seqnum = None;
             state.segment_seqnum = None;
             state.seek_event = None;
