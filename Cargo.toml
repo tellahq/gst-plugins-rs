@@ -64,6 +64,7 @@ default-members = [
     "audio/lewton",
 
     "generic/threadshare",
+    "generic/playbinpool",
 
     "mux/fmp4",
     "mux/mp4",
