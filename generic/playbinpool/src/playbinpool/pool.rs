@@ -87,7 +87,7 @@ impl ObjectImpl for PlaybinPool {
                         Some(pool.imp().prepare_pipeline(src).into())
                     })
                     .build(),
-                glib::subclass::Signal::builder("release-pipeline")
+                glib::subclass::Signal::builder("unprepare-pipeline")
                     .param_types([super::PlaybinPoolSrc::static_type()])
                     .return_type::<bool>()
                     .action()
@@ -162,6 +162,13 @@ impl PlaybinPool {
         }
 
         let playbin = self.get_unused_or_create_pipeline(src, &mut state);
+
+        gst::debug!(CAT, imp: self, "Starting {playbin:?}");
+        if let Err(err) = playbin.imp().play() {
+            gst::warning!(CAT, imp: self, "Failed to play pipeline: {}", err);
+            return false;
+        }
+
         state.prepared_pipelines.push(playbin);
 
         true

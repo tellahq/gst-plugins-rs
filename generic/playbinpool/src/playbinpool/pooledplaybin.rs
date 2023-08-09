@@ -25,7 +25,6 @@ pub struct PooledPlayBin {
 
 impl Default for PooledPlayBin {
     fn default() -> Self {
-        gst::error!(CAT, "Creating default playbin");
         let pipeline = gst::Pipeline::new();
 
         let uridecodebin = gst::ElementFactory::make("uridecodebin3")
@@ -75,15 +74,15 @@ impl PartialEq for PooledPlayBin {
 
 impl PooledPlayBin {
     fn pad_added(&self, pad: &gst::Pad) {
-        gst::error!(CAT, "Pad added: {:?}", pad);
+        gst::debug!(CAT, imp: self, "Pad added: {:?}", pad);
         let sinkpad = self.sink.static_pad("sink").unwrap();
         if sinkpad.is_linked() {
-            gst::error!(CAT, "Pad already linked");
+            gst::error!(CAT, imp: self, "Pad already linked");
             return;
         }
 
         if let Err(err) = pad.link(&sinkpad) {
-            gst::error!(CAT, "Failed to link pads: {:?}", err);
+            gst::error!(CAT, imp: self, "Failed to link pads: {:?}", err);
         }
     }
 
@@ -134,8 +133,9 @@ impl PooledPlayBin {
                     let stream_id = stream.stream_id();
                     stream_id.map_or(false, |s| wanted_stream_id.as_str() == s.as_str())
                 }) {
-                    gst::error!(
+                    gst::debug!(
                         CAT,
+                        imp: self,
                         "{:?} Selecting specified stream: {:?}",
                         self.name,
                         wanted_stream_id
@@ -143,8 +143,9 @@ impl PooledPlayBin {
 
                     Some(stream)
                 } else {
-                    gst::error!(
+                    gst::warning!(
                         CAT,
+                        imp: self,
                         "{:?} requested stream {} not found in {}",
                         self.name,
                         wanted_stream_id,
@@ -162,8 +163,9 @@ impl PooledPlayBin {
             } else if let Some(stream) = collection.iter().find(|stream| {
                 stream.stream_type() == self.stream_type() && stream.stream_id().is_some()
             }) {
-                gst::error!(
+                gst::debug!(
                     CAT,
+                    imp: self,
                     "{:?} Selecting stream: {:?}",
                     self.name,
                     stream.stream_id()
@@ -173,6 +175,7 @@ impl PooledPlayBin {
                 /* FIXME --- Post an error on the bus! */
                 gst::error!(
                     CAT,
+                    imp: self,
                     "{:?} No stream found for type: {:?}",
                     self.name,
                     self.stream_type()
@@ -233,7 +236,11 @@ impl PooledPlayBin {
     pub(crate) fn release(&self) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
         self.set_target_src(None);
 
-        self.pipeline.set_state(gst::State::Null)?;
+        self.pipeline.call_async(|pipeline| {
+            if let Err(err) = pipeline.set_state(gst::State::Null) {
+                gst::error!(CAT, obj: pipeline, "Could not teardown pipeline {err:?}");
+            }
+        });
         let mut state = self.state.lock().unwrap();
         state.stream = None;
         drop(state);
