@@ -36,7 +36,6 @@ struct State {
     playbin: Option<PooledPlayBin>,
     bus_message_sigid: Option<glib::SignalHandlerId>,
     source_setup_sigid: Option<glib::SignalHandlerId>,
-    start_completed: bool,
 
     segment: Option<gst::Segment>,
     seek_event: Option<gst::Event>,
@@ -67,6 +66,7 @@ pub struct PlaybinPoolSrc {
         blurb = "Generate a dot file of the underlying pipeline and return its file path")
     ]
     state: Mutex<State>,
+    start_completed: Mutex<bool>,
 
     pool: super::PlaybinPool,
 }
@@ -77,6 +77,7 @@ impl Default for PlaybinPoolSrc {
             settings: Mutex::new(Settings::default()),
             state: Mutex::new(State::default()),
             pool: pool::PLAYBIN_POOL.lock().unwrap().clone(),
+            start_completed: Mutex::new(false),
         }
     }
 }
@@ -146,11 +147,11 @@ impl PlaybinPoolSrc {
 
     fn handle_bus_message(&self, _bus: &gst::Bus, message: &gst::Message) {
         let view = message.view();
-        let (playbin, start_completed) = {
+        let playbin = {
             let state = self.state.lock().unwrap();
 
             if let Some(ref playbin) = state.playbin {
-                (playbin.clone(), state.start_completed)
+                playbin.clone()
             } else {
                 gst::debug!(CAT, imp: self, "Got message {:?} without playbin", message);
                 // We have been disconnected while we already entered the
@@ -166,12 +167,14 @@ impl PlaybinPoolSrc {
                 }
             }
             gst::MessageView::StateChanged(s) => {
-                if !start_completed
-                    && s.src() == Some(playbin.pipeline().upcast_ref())
+                if s.src() == Some(playbin.pipeline().upcast_ref())
                     && s.pending() == gst::State::VoidPending
                 {
-                    self.state.lock().unwrap().start_completed = true;
-                    self.obj().start_complete(gst::FlowReturn::Ok);
+                    if let Ok(mut start_completed) = self.start_completed.try_lock() {
+                        gst::debug!(CAT, imp: self, "start is now complete");
+                        self.obj().start_complete(gst::FlowReturn::Ok);
+                        *start_completed = true;
+                    }
                 }
             }
             _ => (),
@@ -566,14 +569,14 @@ impl BaseSrcImpl for PlaybinPoolSrc {
     }
 
     fn do_seek(&self, segment: &mut gst::Segment) -> bool {
-        let mut state = self.state.lock().unwrap();
-        let seek_event = if let Some(seek_event) = state.seek_event.take() {
-            seek_event
-        } else {
+        if let Err(_) = self.start_completed.try_lock() {
             gst::debug!(CAT, imp: self, "Ignoring initial seek");
 
             return true;
-        };
+        }
+
+        let mut state = self.state.lock().unwrap();
+        let seek_event = state.seek_event.take().expect("We should have seen the seek event");
         let playbin = state.playbin.clone();
         drop(state);
 
@@ -625,6 +628,8 @@ impl BaseSrcImpl for PlaybinPoolSrc {
             ));
         };
 
+        let mut start_completed = self.start_completed.lock().unwrap();
+        *start_completed = false;
         self.set_playbin(&playbin);
         let res = playbin.imp().play().map_err(|err| {
             gst::error_msg!(
@@ -634,8 +639,11 @@ impl BaseSrcImpl for PlaybinPoolSrc {
         })?;
         if res == gst::StateChangeSuccess::Success {
             gst::debug!(CAT, imp: self, "Already ready");
-            self.state.lock().unwrap().start_completed = true;
-            self.obj().start_complete(gst::FlowReturn::Ok);
+            if !*start_completed {
+
+                self.obj().start_complete(gst::FlowReturn::Ok);
+                *start_completed = true;
+            }
         } else {
             let settings = self.settings.lock().unwrap();
             gst::debug!(
@@ -740,7 +748,6 @@ impl BaseSrcImpl for PlaybinPoolSrc {
             }
             pipeline.bus().unwrap().disable_sync_message_emission();
 
-            state.start_completed = false;
             state.playbin.take().unwrap()
         };
         gst::info!(CAT, imp: self, "Releasing {pipeline:?}");
