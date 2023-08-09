@@ -143,7 +143,7 @@ impl PlaybinPool {
             return true;
         }
 
-        return false;
+        false
     }
 
     fn prepare_pipeline(&self, src: &super::PlaybinPoolSrc) -> bool {
@@ -154,8 +154,7 @@ impl PlaybinPool {
         if state
             .prepared_pipelines
             .iter()
-            .find(|p| p.imp().target_src().as_ref() == Some(src))
-            .is_some()
+            .any(|p| p.imp().target_src().as_ref() == Some(src))
         {
             gst::debug!(CAT, "Pipeline already prepared for {:?}", src);
 
@@ -163,9 +162,9 @@ impl PlaybinPool {
         }
 
         let playbin = self.get_unused_or_create_pipeline(src, &mut state);
-        state.prepared_pipelines.push(playbin.clone());
+        state.prepared_pipelines.push(playbin);
 
-        return true;
+        true
     }
 
     pub(crate) fn get(&self, src: &super::PlaybinPoolSrc) -> PooledPlayBin {
@@ -224,18 +223,10 @@ impl PlaybinPool {
         let playbin = playbin.map_or_else(
             || {
                 gst::debug!(CAT, "Starting new pipeline");
-                PooledPlayBin::new(
-                    uri.as_ref(),
-                    stream_type,
-                    stream_id.as_ref().map(|s| s.as_str()),
-                )
+                PooledPlayBin::new(uri.as_ref(), stream_type, stream_id.as_deref())
             },
             |playbin| {
-                playbin.reset(
-                    uri.as_ref(),
-                    stream_type,
-                    stream_id.as_ref().map(|s| s.as_str()),
-                );
+                playbin.reset(uri.as_ref(), stream_type, stream_id.as_deref());
 
                 gst::debug!(CAT, "Reusing existing pipeline: {:?}", playbin,);
 
@@ -286,7 +277,7 @@ impl PlaybinPool {
 
         self.state.lock().unwrap().unused_pipelines.push(pipeline);
 
-        let cleanup_timeout = self.settings.lock().unwrap().cleanup_timeout.clone();
+        let cleanup_timeout = self.settings.lock().unwrap().cleanup_timeout;
         RUNTIME.spawn(glib::clone!(@weak self as this => async move {
             gst::info!(
                 CAT,

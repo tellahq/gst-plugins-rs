@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use gst::{glib, prelude::*, subclass::prelude::*};
 
-use super::playbinpool::CAT;
+use super::pool::CAT;
 
 #[derive(Debug)]
 struct State {
@@ -49,10 +49,11 @@ impl Default for PooledPlayBin {
         pipeline.add(&sink).unwrap();
 
         let name = pipeline.name().to_string();
-        let this = Self {
-            pipeline: pipeline.clone(),
+
+        Self {
+            pipeline,
             sink,
-            uridecodebin: uridecodebin.clone().upcast(),
+            uridecodebin: uridecodebin.upcast(),
             state: Mutex::new(State {
                 unused_since: None,
                 stream: None,
@@ -62,9 +63,7 @@ impl Default for PooledPlayBin {
                 target_src: None,
             }),
             name,
-        };
-
-        this
+        }
     }
 }
 
@@ -127,84 +126,77 @@ impl PooledPlayBin {
     }
 
     fn handle_bus_message(&self, message: &gst::Message) {
-        let view = message.view();
+        if let gst::MessageView::StreamCollection(s) = message.view() {
+            let collection = s.stream_collection();
 
-        match view {
-            gst::MessageView::StreamCollection(s) => {
-                let collection = s.stream_collection();
+            let stream = if let Some(ref wanted_stream_id) = self.requested_stream_id() {
+                if let Some(stream) = collection.iter().find(|stream| {
+                    let stream_id = stream.stream_id();
+                    stream_id.map_or(false, |s| wanted_stream_id.as_str() == s.as_str())
+                }) {
+                    gst::error!(
+                        CAT,
+                        "{:?} Selecting specified stream: {:?}",
+                        self.name,
+                        wanted_stream_id
+                    );
 
-                let stream = if let Some(ref wanted_stream_id) = self.requested_stream_id() {
-                    if let Some(stream) = collection.iter().find(|stream| {
-                        let stream_id = stream.stream_id();
-                        stream_id.map_or(false, |s| wanted_stream_id.as_str() == s.as_str())
-                    }) {
-                        gst::error!(
-                            CAT,
-                            "{:?} Selecting specified stream: {:?}",
-                            self.name,
-                            wanted_stream_id
-                        );
-
-                        Some(stream)
-                    } else {
-                        gst::error!(
-                            CAT,
-                            "{:?} requested stream {} not found in {}",
-                            self.name,
-                            wanted_stream_id,
-                            self.uridecodebin().property::<String>("uri")
-                        );
-
-                        None
-                    }
+                    Some(stream)
                 } else {
+                    gst::error!(
+                        CAT,
+                        "{:?} requested stream {} not found in {}",
+                        self.name,
+                        wanted_stream_id,
+                        self.uridecodebin().property::<String>("uri")
+                    );
+
                     None
-                };
+                }
+            } else {
+                None
+            };
 
-                let stream = if let Some(stream) = stream {
-                    stream
-                } else {
-                    if let Some(stream) = collection.iter().find(|stream| {
-                        stream.stream_type() == self.stream_type() && stream.stream_id().is_some()
-                    }) {
-                        gst::error!(
-                            CAT,
-                            "{:?} Selecting stream: {:?}",
-                            self.name,
-                            stream.stream_id()
-                        );
-                        stream
-                    } else {
-                        /* FIXME --- Post an error on the bus! */
-                        gst::error!(
-                            CAT,
-                            "{:?} No stream found for type: {:?}",
-                            self.name,
-                            self.stream_type()
-                        );
+            let stream = if let Some(stream) = stream {
+                stream
+            } else if let Some(stream) = collection.iter().find(|stream| {
+                stream.stream_type() == self.stream_type() && stream.stream_id().is_some()
+            }) {
+                gst::error!(
+                    CAT,
+                    "{:?} Selecting stream: {:?}",
+                    self.name,
+                    stream.stream_id()
+                );
+                stream
+            } else {
+                /* FIXME --- Post an error on the bus! */
+                gst::error!(
+                    CAT,
+                    "{:?} No stream found for type: {:?}",
+                    self.name,
+                    self.stream_type()
+                );
 
-                        return;
-                    }
-                };
+                return;
+            };
 
-                let _ = self.state.lock().unwrap().stream.insert(stream.clone());
-                let uridecodebin = self.uridecodebin();
-                message
-                    .src()
-                    .unwrap_or_else(|| uridecodebin.upcast_ref::<gst::Object>())
-                    .downcast_ref::<gst::Element>()
+            let _ = self.state.lock().unwrap().stream.insert(stream.clone());
+            let uridecodebin = self.uridecodebin();
+            message
+                .src()
+                .unwrap_or_else(|| uridecodebin.upcast_ref::<gst::Object>())
+                .downcast_ref::<gst::Element>()
+                .unwrap()
+                .send_event(gst::event::SelectStreams::new(&[stream
+                    .stream_id()
                     .unwrap()
-                    .send_event(gst::event::SelectStreams::new(&[stream
-                        .stream_id()
-                        .unwrap()
-                        .as_str()]));
-            }
-            _ => (),
+                    .as_str()]));
         }
     }
 
     pub(crate) fn unused_since(&self) -> Option<std::time::Instant> {
-        self.state.lock().unwrap().unused_since.clone()
+        self.state.lock().unwrap().unused_since
     }
 
     pub(crate) fn stream(&self) -> Option<gst::Stream> {

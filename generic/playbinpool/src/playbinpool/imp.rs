@@ -12,7 +12,7 @@ use gst::prelude::*;
 use gst::subclass::prelude::*;
 use gst_base::{prelude::*, subclass::prelude::*};
 
-use super::{playbinpool, PooledPlayBin};
+use super::{pool, PooledPlayBin};
 
 #[derive(Debug)]
 struct Settings {
@@ -76,7 +76,7 @@ impl Default for PlaybinPoolSrc {
         Self {
             settings: Mutex::new(Settings::default()),
             state: Mutex::new(State::default()),
-            pool: playbinpool::PLAYBIN_POOL.lock().unwrap().clone(),
+            pool: pool::PLAYBIN_POOL.lock().unwrap().clone(),
         }
     }
 }
@@ -124,7 +124,7 @@ impl PlaybinPoolSrc {
             pipeline.name()
         );
         let dot_file = DUMPDOT_DIR.as_ref().unwrap().join(&fname);
-        let mut file = std::fs::File::create(dot_file.clone())
+        let mut file = std::fs::File::create(dot_file)
             .map_err(|e| {
                 gst::warning!(CAT, "Could not create dot file: {e:?}");
                 e
@@ -166,11 +166,12 @@ impl PlaybinPoolSrc {
                 }
             }
             gst::MessageView::StateChanged(s) => {
-                if !start_completed && s.src() == Some(playbin.pipeline().upcast_ref()) {
-                    if s.pending() == gst::State::VoidPending {
-                        self.state.lock().unwrap().start_completed = true;
-                        self.obj().start_complete(gst::FlowReturn::Ok);
-                    }
+                if !start_completed
+                    && s.src() == Some(playbin.pipeline().upcast_ref())
+                    && s.pending() == gst::State::VoidPending
+                {
+                    self.state.lock().unwrap().start_completed = true;
+                    self.obj().start_complete(gst::FlowReturn::Ok);
                 }
             }
             _ => (),
@@ -231,7 +232,7 @@ impl PlaybinPoolSrc {
                     return Err(gst::FlowError::Flushing);
                 }
 
-                return Ok(obj);
+                Ok(obj)
             };
 
         loop {
@@ -246,7 +247,7 @@ impl PlaybinPoolSrc {
                 match event_type {
                     Some(gst::EventType::Caps) => {
                         if let Some(caps) = sink_sinkpad.caps() {
-                            return return_func(self, caps.to_owned().upcast());
+                            return return_func(self, caps.upcast());
                         }
                     }
                     Some(gst::EventType::Segment) => {
@@ -334,14 +335,11 @@ impl PlaybinPoolSrc {
             }
 
             if let Some(event) = event {
-                match event.view() {
-                    gst::EventView::Caps(c) => {
-                        gst::log!(CAT, imp: self, "Got caps: {:?}", c.caps());
-                        if matches!(event_type, Some(gst::EventType::Caps)) {
-                            return return_func(self, c.caps().to_owned().upcast());
-                        }
+                if let gst::EventView::Caps(c) = event.view() {
+                    gst::log!(CAT, imp: self, "Got caps: {:?}", c.caps());
+                    if matches!(event_type, Some(gst::EventType::Caps)) {
+                        return return_func(self, c.caps().to_owned().upcast());
                     }
-                    _ => (),
                 }
             } else if obj.type_().is_a(gst::Sample::static_type()) {
                 if event_type.is_some() {
@@ -473,7 +471,7 @@ impl ObjectImpl for PlaybinPoolSrc {
                                 settings.stream_id.as_ref().map_or_else(|| stream_id.as_str(), |id| {
                                     let pipeline = playbin.pipeline();
                                     if id.as_str() != stream_id.as_str() {
-                                        gst::debug_bin_to_dot_file_with_ts(&pipeline, gst::DebugGraphDetails::all(), &format!("{}-wrong-stream-id", this.obj().name()));
+                                        gst::debug_bin_to_dot_file_with_ts(&pipeline, gst::DebugGraphDetails::all(), format!("{}-wrong-stream-id", this.obj().name()));
                                         gst::info!(CAT, imp: this, "Selected wrong stream ID {}, {} could probably not be found \
                                             FAKING selected stream ID", stream_id, id)
                                     }
@@ -482,7 +480,7 @@ impl ObjectImpl for PlaybinPoolSrc {
                                 })
                             )
                             .flags(stream.stream_flags())
-                            .stream(stream.clone());
+                            .stream(stream);
 
                         if let Some(group_id) = s.group_id() {
                             event_builder = event_builder.group_id(group_id);
@@ -496,7 +494,7 @@ impl ObjectImpl for PlaybinPoolSrc {
                             let segment = s.segment();
                             probe_info.data = Some(gst::PadProbeData::Event(
                                 gst::event::Segment::builder(segment)
-                                    .seqnum(seqnum.clone())
+                                    .seqnum(*seqnum)
                                     .running_time_offset(event.running_time_offset())
                                     .build()));
                         } else {
@@ -619,7 +617,7 @@ impl BaseSrcImpl for PlaybinPoolSrc {
 
         let has_uri = self.settings.lock().unwrap().uri.is_some();
         let playbin = if has_uri {
-            self.pool.get_playbin(&*self.obj())
+            self.pool.get_playbin(&self.obj())
         } else {
             return Err(gst::error_msg!(
                 gst::ResourceError::Settings,
@@ -674,16 +672,13 @@ impl BaseSrcImpl for PlaybinPoolSrc {
     }
 
     fn event(&self, event: &gst::Event) -> bool {
-        match event.view() {
-            gst::EventView::Seek(_s) => {
-                gst::debug!(CAT, imp: self, "Seeking");
+        if let gst::EventView::Seek(_s) = event.view() {
+            gst::debug!(CAT, imp: self, "Seeking");
 
-                self.state.lock().unwrap().seek_event = Some(event.clone())
-            }
-            _ => (),
+            self.state.lock().unwrap().seek_event = Some(event.clone())
         }
 
-        return self.parent_event(event);
+        self.parent_event(event)
     }
 
     fn create(
