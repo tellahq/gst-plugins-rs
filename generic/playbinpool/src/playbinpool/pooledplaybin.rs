@@ -12,7 +12,7 @@ struct State {
     unused_since: Option<std::time::Instant>,
     bus_message_sigid: Option<glib::SignalHandlerId>,
 
-    target_src: Option<gst::Element>,
+    target_src: Option<super::PlaybinPoolSrc>,
 }
 
 pub struct PooledPlayBin {
@@ -223,11 +223,11 @@ impl PooledPlayBin {
         self.pipeline.set_state(gst::State::Playing)
     }
 
-    pub(crate) fn target_src(&self) -> Option<gst::Element> {
+    pub(crate) fn target_src(&self) -> Option<super::PlaybinPoolSrc> {
         self.state.lock().unwrap().target_src.clone()
     }
 
-    pub(crate) fn set_target_src(&self, target_src: Option<gst::Element>) {
+    pub(crate) fn set_target_src(&self, target_src: Option<super::PlaybinPoolSrc>) {
         let mut state = self.state.lock().unwrap();
 
         if target_src.is_none() {
@@ -239,6 +239,8 @@ impl PooledPlayBin {
     }
 
     pub(crate) fn release(&self) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
+        self.set_target_src(None);
+
         self.pipeline.set_state(gst::State::Null)?;
         let mut state = self.state.lock().unwrap();
         state.stream = None;
@@ -251,7 +253,7 @@ impl PooledPlayBin {
     }
 
     pub(crate) fn stop(&self) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
-        gst::error!(CAT, imp: self, "----> STOPPING < ------------------------");
+        gst::debug!(CAT, imp: self, "Stopping");
         if let Some(sigid) = self.state.lock().unwrap().bus_message_sigid.take() {
             self.pipeline.bus().unwrap().disconnect(sigid);
         }
