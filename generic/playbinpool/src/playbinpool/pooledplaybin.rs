@@ -47,7 +47,11 @@ impl Default for PooledPlayBin {
         });
 
         pipeline.add(&uridecodebin).unwrap();
-        let sink = gst_app::AppSink::builder().sync(false).build();
+        let sink = gst_app::AppSink::builder()
+            .sync(false)
+            .enable_last_sample(false)
+            .max_buffers(1)
+            .build();
         pipeline.add(&sink).unwrap();
 
         let name = pipeline.name().to_string();
