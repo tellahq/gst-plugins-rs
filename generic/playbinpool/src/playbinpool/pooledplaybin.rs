@@ -249,16 +249,16 @@ impl PooledPlayBin {
         self.set_target_src(None);
 
         let _ = self.state_lock.lock();
-        if let Err(err) = self.pipeline.set_state(gst::State::Null) {
-            gst::error!(CAT, obj: self.pipeline, "Could not teardown pipeline {err:?}");
-        }
+        self.pipeline.call_async(|pipeline| {
+            if let Err(err) = pipeline.set_state(gst::State::Null) {
+                gst::error!(CAT, obj: pipeline, "Could not teardown pipeline {err:?}");
+            }
+        });
         let mut state = self.state.lock().unwrap();
         state.stream = None;
         drop(state);
 
         gst::debug!(CAT, "Releasing pipeline {}", self.name);
-        self.pipeline
-            .debug_to_dot_file_with_ts(gst::DebugGraphDetails::ALL, "releasing");
         Ok(gst::StateChangeSuccess::Success)
     }
 
