@@ -154,10 +154,11 @@ impl PooledPlayBin {
                     gst::warning!(
                         CAT,
                         imp: self,
-                        "{:?} requested stream {} not found in {}",
+                        "{:?} requested stream {} not found in {} - available: {:?}",
                         self.name,
                         wanted_stream_id,
-                        self.uridecodebin().property::<String>("uri")
+                        self.uridecodebin().property::<String>("uri"),
+                        collection.iter().map(|s| s.stream_id().to_owned()).collect::<Vec<Option<glib::GString>>>()
                     );
 
                     None
