@@ -760,6 +760,11 @@ impl BaseSrcImpl for PlaybinPoolSrc {
             gst::QueryViewMut::Uri(q) => {
                 q.set_uri(self.settings.lock().unwrap().uri.as_ref());
             }
+            gst::QueryViewMut::Duration(_) => {
+                if let Some(playbin) = self.playbin() {
+                    return playbin.pipeline().query(query);
+                }
+            }
             gst::QueryViewMut::Custom(_) => {
                 if let Some(playbin) = self.playbin() {
                     return playbin.pipeline().query(query);
