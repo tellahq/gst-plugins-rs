@@ -339,6 +339,14 @@ impl PlaybinPoolSrc {
                     gst::log!(CAT, imp: self, "Got caps: {:?}", c.caps());
                     if matches!(event_type, Some(gst::EventType::Caps)) {
                         return return_func(self, c.caps().to_owned().upcast());
+                    } else {
+                        gst::debug!(CAT, imp: self, "Pushing new caps downstream");
+                        self.obj()
+                            .set_caps(&c.caps().to_owned())
+                            .map_err(|e| {
+                                gst::error!(CAT, "Could not set caps: {e:?}");
+                                gst::FlowError::NotNegotiated
+                            })?;
                     }
                 }
             } else if obj.type_().is_a(gst::Sample::static_type()) {
