@@ -490,16 +490,22 @@ impl ObjectImpl for PlaybinPoolSrc {
                     },
                     gst::EventView::Segment(s) => {
                         gst::log!(CAT, imp: this, "Got segment {s:?}");
-                        if let Some(seqnum) = this.state.lock().unwrap().segment_seqnum.as_ref() {
-                            let segment = s.segment();
-                            probe_info.data = Some(gst::PadProbeData::Event(
-                                gst::event::Segment::builder(segment)
-                                    .seqnum(*seqnum)
-                                    .running_time_offset(event.running_time_offset())
-                                    .build()));
+                        let state = this.state.lock().unwrap();
+
+                        if let Some(segment) = state.segment.as_ref().clone() {
+                            let mut builder = gst::event::Segment::builder(segment)
+                                .running_time_offset(event.running_time_offset());
+
+                            if let Some(seqnum) = state.segment_seqnum.as_ref() {
+                                builder = builder.seqnum(*seqnum);
+                            }
+
+                            probe_info.data = Some(gst::PadProbeData::Event(builder.build()));
                         } else {
-                            gst::debug!(CAT, imp: this, "Trying to push a segment before we received one, pushing it as is");
-                        }
+                            gst::debug!(CAT, imp: this, "Trying to push a segment before we received one, dropping it.");
+                            return gst::PadProbeReturn::Drop
+                        };
+
                     },
                     _ => (),
                 }
