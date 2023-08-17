@@ -298,7 +298,7 @@ impl PlaybinPoolSrc {
 
             let event = if obj.type_().is_a(gst::Event::static_type()) {
                 let event = obj.downcast_ref::<gst::Event>().unwrap();
-                gst::debug!(CAT, imp: self, "Got event: {:?}", event);
+                gst::log!(CAT, imp: self, "Got event: {:?}", event);
                 match event.view() {
                     gst::EventView::Tag(_) => {
                         gst::log!(CAT, imp: self, "Got tag event, forwarding");
@@ -520,6 +520,17 @@ impl ObjectImpl for PlaybinPoolSrc {
 impl GstObjectImpl for PlaybinPoolSrc {}
 
 impl ElementImpl for PlaybinPoolSrc {
+    fn send_event(&self, event: gst::Event) -> bool {
+        gst::error!(CAT, imp: self, "Got event {event:?}");
+        if let gst::EventView::Seek(s) = event.view() {
+            gst::error!(CAT, imp: self, "Seeking {s:?}");
+
+            self.state.lock().unwrap().seek_event = Some(event.clone());
+        }
+
+        self.parent_send_event(event)
+    }
+
     fn metadata() -> Option<&'static gst::subclass::ElementMetadata> {
         static ELEMENT_METADATA: Lazy<gst::subclass::ElementMetadata> = Lazy::new(|| {
             gst::subclass::ElementMetadata::new(
@@ -765,8 +776,13 @@ impl BaseSrcImpl for PlaybinPoolSrc {
                     return playbin.pipeline().query(query);
                 }
             }
-            gst::QueryViewMut::Custom(_) => {
-                if let Some(playbin) = self.playbin() {
+            gst::QueryViewMut::Custom(s) => {
+                if s.structure().map_or(false, |s| s.name().as_str() == "can-seek-in-null") {
+                    gst::error!(CAT, "Can seek in NULL");
+                    s.structure_mut().set("res", true);
+
+                    return true;
+                } else if let Some(playbin) = self.playbin() {
                     return playbin.pipeline().query(query);
                 }
             }
