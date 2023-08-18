@@ -158,7 +158,10 @@ impl PooledPlayBin {
                         self.name,
                         wanted_stream_id,
                         self.uridecodebin().property::<String>("uri"),
-                        collection.iter().map(|s| s.stream_id().to_owned()).collect::<Vec<Option<glib::GString>>>()
+                        collection
+                            .iter()
+                            .map(|s| s.stream_id().to_owned())
+                            .collect::<Vec<Option<glib::GString>>>()
                     );
 
                     None
