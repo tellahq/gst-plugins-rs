@@ -1,6 +1,6 @@
 use std::sync::Mutex;
 
-use gst::{glib, prelude::*, subclass::prelude::*};
+use gst::{glib, glib::once_cell::sync::Lazy, prelude::*, subclass::prelude::*};
 
 use super::pool::CAT;
 
@@ -238,9 +238,7 @@ impl PooledPlayBin {
     pub(crate) fn set_target_src(&self, target_src: Option<super::PlaybinPoolSrc>) {
         let mut state = self.state.lock().unwrap();
 
-        if target_src.is_none() {
-            state.unused_since = Some(std::time::Instant::now());
-        } else {
+        if target_src.is_some() {
             state.unused_since = None;
         }
         state.target_src = target_src;
@@ -249,10 +247,17 @@ impl PooledPlayBin {
     pub(crate) fn release(&self) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
         self.set_target_src(None);
 
-        let _ = self.state_lock.lock();
-        self.pipeline.call_async(|pipeline| {
+        let obj = self.obj().clone();
+        self.pipeline.call_async(move |pipeline| {
+            let this = obj.imp();
+            let _ = this.state_lock.lock();
+
             if let Err(err) = pipeline.set_state(gst::State::Null) {
-                gst::error!(CAT, obj: pipeline, "Could not teardown pipeline {err:?}");
+                gst::error!(CAT, imp: this, "Could not teardown pipeline {err:?}");
+            } else {
+                this.state.lock().unwrap().unused_since = Some(std::time::Instant::now());
+                // Pipeline ready to be reused, bring it back to the pool.
+                obj.emit_by_name::<()>("released", &[]);
             }
         });
         let mut state = self.state.lock().unwrap();
@@ -263,18 +268,32 @@ impl PooledPlayBin {
         Ok(gst::StateChangeSuccess::Success)
     }
 
-    pub(crate) fn stop(&self) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
+    pub(crate) fn stop(&self) {
         gst::debug!(CAT, imp: self, "Stopping");
         if let Some(sigid) = self.state.lock().unwrap().bus_message_sigid.take() {
             self.pipeline.bus().unwrap().disconnect(sigid);
         }
 
-        let _ = self.state_lock.lock();
-        self.pipeline.set_state(gst::State::Null)
+        let obj = self.obj().clone();
+        self.pipeline.call_async(move |pipeline| {
+            let this = obj.imp();
+
+            let _ = this.state_lock.lock();
+            if let Err(err) = pipeline.set_state(gst::State::Null) {
+                gst::error!(CAT, obj: pipeline, "Could not teardown pipeline {err:?}");
+            }
+        });
     }
 }
 
 impl ObjectImpl for PooledPlayBin {
+    fn signals() -> &'static [glib::subclass::Signal] {
+        static SIGNALS: Lazy<Vec<glib::subclass::Signal>> =
+            Lazy::new(|| vec![glib::subclass::Signal::builder("released").build()]);
+
+        SIGNALS.as_ref()
+    }
+
     fn constructed(&self) {
         self.uridecodebin
             .connect_pad_added(glib::clone!(@weak self as this => move |_, pad| {
