@@ -232,7 +232,37 @@ impl PlaybinPool {
         let playbin = playbin.map_or_else(
             || {
                 gst::debug!(CAT, "Starting new pipeline");
-                PooledPlayBin::new(uri.as_ref(), stream_type, stream_id.as_deref())
+
+                let pipeline = PooledPlayBin::new(uri.as_ref(), stream_type, stream_id.as_deref());
+                let obj = self.obj();
+
+                // Make sure the pipeline is returned to the pool once it is ready to be reused
+                pipeline.connect_closure(
+                    "released",
+                    false,
+                    glib::closure!(@watch obj => move
+                        |pipeline: PooledPlayBin| {
+                            gst::debug!(CAT, obj: obj, "{pipeline:?} not used anymore.");
+
+                            let this = obj.imp();
+                            this.state.lock().unwrap().unused_pipelines.insert(0, pipeline);
+
+                            let cleanup_timeout = this.settings.lock().unwrap().cleanup_timeout;
+                            RUNTIME.spawn(glib::clone!(@weak this => async move {
+                                gst::info!(
+                                    CAT,
+                                    "Cleaning up unused pipelines in {:?} seconds",
+                                    cleanup_timeout
+                                );
+                                tokio::time::sleep(cleanup_timeout).await;
+
+                                this.cleanup();
+                            }));
+                        }
+                    ),
+                );
+
+                pipeline
             },
             |playbin| {
                 playbin.reset(uri.as_ref(), stream_type, stream_id.as_deref());
@@ -251,6 +281,7 @@ impl PlaybinPool {
         gst::debug!(CAT, "Cleaning up unused pipelines");
         let mut state = self.state.lock().unwrap();
 
+        let mut cleaned_up = Vec::new();
         state.unused_pipelines.retain(|p| {
             if p.imp()
                 .unused_since()
@@ -260,17 +291,18 @@ impl PlaybinPool {
                 .elapsed()
                 > self.settings.lock().unwrap().cleanup_timeout
             {
-                if let Err(err) = p.imp().stop() {
-                    gst::error!(CAT, "Failed to stop pipeline {p:?}: {:?}", err);
-                }
-
+                cleaned_up.insert(0, p.clone());
                 false
             } else {
                 true
             }
         });
-
         gst::debug!(CAT, "Unused pipelines: {:?}", state.unused_pipelines.len());
+        drop(state);
+
+        for pipeline in cleaned_up.into_iter() {
+            pipeline.imp().stop();
+        }
     }
 
     pub(crate) fn release(&self, pipeline: PooledPlayBin) {
@@ -283,19 +315,5 @@ impl PlaybinPool {
         if let Err(err) = pipeline.imp().release() {
             gst::error!(CAT, "Failed to release pipeline: {}", err);
         }
-
-        self.state.lock().unwrap().unused_pipelines.push(pipeline);
-
-        let cleanup_timeout = self.settings.lock().unwrap().cleanup_timeout;
-        RUNTIME.spawn(glib::clone!(@weak self as this => async move {
-            gst::info!(
-                CAT,
-                "Cleaning up unused pipelines in {:?} seconds",
-                cleanup_timeout
-            );
-            tokio::time::sleep(cleanup_timeout).await;
-
-            this.cleanup();
-        }));
     }
 }
