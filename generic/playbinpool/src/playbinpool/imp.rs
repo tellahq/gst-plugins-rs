@@ -264,12 +264,12 @@ impl PlaybinPoolSrc {
             }
 
             let is_eos = sink.is_eos();
-            let obj = match sink.pull_object() {
-                Ok(obj) => {
+            let obj = match sink.try_pull_object(gst::ClockTime::from_mseconds(100)) {
+                Some(obj) => {
                     gst::log!(CAT, imp: self, "Got object: {:?}", obj);
                     Ok(obj)
                 }
-                Err(e) => {
+                None => {
                     // Handle the case where the sink changed it EOS state
                     // between the pull and now
                     if is_eos || sink.is_eos() {
@@ -286,13 +286,12 @@ impl PlaybinPoolSrc {
                         gst::debug!(
                             CAT,
                             imp: self,
-                            "Got error while flushing: {e:?} -> returning flushing"
+                            "Flushing"
                         );
                         return Err(gst::FlowError::Flushing);
                     }
 
-                    gst::error!(CAT, imp: self, "Got error: {e:?}");
-                    return Err(gst::FlowError::Error);
+                    continue;
                 }
             }?;
 
