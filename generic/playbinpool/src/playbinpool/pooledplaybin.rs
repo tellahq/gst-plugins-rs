@@ -253,11 +253,12 @@ impl PooledPlayBin {
         let obj = self.obj().clone();
         self.pipeline.call_async(move |pipeline| {
             let this = obj.imp();
-            let _ = this.state_lock.lock();
-
+            let state_lock = this.state_lock.lock();
             if let Err(err) = pipeline.set_state(gst::State::Null) {
                 gst::error!(CAT, imp: this, "Could not teardown pipeline {err:?}");
             } else {
+                drop(state_lock);
+
                 this.state.lock().unwrap().unused_since = Some(std::time::Instant::now());
                 // Pipeline ready to be reused, bring it back to the pool.
                 obj.emit_by_name::<()>("released", &[]);

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard, Condvar};
 
 use gst::{
     glib::{self, once_cell::sync::Lazy, Properties},
@@ -49,10 +49,18 @@ struct State {
     prepared_pipelines: Vec<PooledPlayBin>,
 }
 
+#[derive(Debug, Default)]
+struct Outstandings {
+    n: Mutex<u32>,
+    cond: Condvar,
+}
+
 #[derive(Properties, Debug, Default)]
 #[properties(wrapper_type = super::PlaybinPool)]
 pub struct PlaybinPool {
     state: Mutex<State>,
+    // Number of pipelines in used */
+    outstandings: Outstandings,
 
     #[property(name="cleanup-timeout",
         get = |s: &Self| s.settings.lock().unwrap().cleanup_timeout.as_secs(),
@@ -98,6 +106,21 @@ impl ObjectImpl for PlaybinPool {
                         Some(pool.imp().unprepare_pipeline(src).into())
                     })
                     .build(),
+                /**
+                 * GstPlaybinPool::deinit:
+                 *
+                 * Deinitialize the pool, should be called when deinitializing
+                 * GStreamer.
+                 */
+                glib::subclass::Signal::builder("deinit")
+                    .action()
+                    .class_handler(|_, args| {
+                        let pool = args[0].get::<super::PlaybinPool>().unwrap();
+
+                        pool.imp().deinit();
+                        None
+                    })
+                    .build(),
             ]
         });
 
@@ -124,6 +147,23 @@ impl PlaybinPool {
         }
 
         self.cleanup();
+    }
+
+    fn deinit(&self) {
+        self.set_cleanup_timeout(0);
+
+        let mut state = self.state.lock().unwrap();
+        while let Some(pipeline) = state.prepared_pipelines.pop(){
+            if let Err(err) = pipeline.imp().release() {
+                gst::error!(CAT, "Failed to release pipeline: {}", err);
+            }
+        }
+        drop(state);
+
+        let mut outstandings = self.outstandings.n.lock().unwrap();
+        while *outstandings > 0 {
+            outstandings = self.outstandings.cond.wait(outstandings).unwrap();
+        }
     }
 
     fn unprepare_pipeline(&self, src: &super::PlaybinPoolSrc) -> bool {
@@ -235,6 +275,9 @@ impl PlaybinPool {
 
                 let pipeline = PooledPlayBin::new(uri.as_ref(), stream_type, stream_id.as_deref());
                 let obj = self.obj();
+                let mut outstandings = self.outstandings.n.lock().unwrap() ;
+                *outstandings += 1;
+                self.outstandings.cond.notify_one();
 
                 // Make sure the pipeline is returned to the pool once it is ready to be reused
                 pipeline.connect_closure(
@@ -300,9 +343,15 @@ impl PlaybinPool {
         gst::debug!(CAT, "Unused pipelines: {:?}", state.unused_pipelines.len());
         drop(state);
 
+        let removed = cleaned_up.len();
         for pipeline in cleaned_up.into_iter() {
             pipeline.imp().stop();
         }
+
+        let mut outstandings = self.outstandings.n.lock().unwrap() ;
+        *outstandings -= removed as u32;
+        self.outstandings.cond.notify_one();
+        drop(outstandings);
     }
 
     pub(crate) fn release(&self, pipeline: PooledPlayBin) {
