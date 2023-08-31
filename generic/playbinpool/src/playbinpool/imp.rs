@@ -341,10 +341,10 @@ impl PlaybinPoolSrc {
                     } else {
                         gst::debug!(CAT, imp: self, "Pushing new caps downstream");
                         self.obj().set_caps(&c.caps().to_owned()).map_err(|e| {
-                            gst::error!(CAT, "Could not set caps: {e:?}");
                             if self.obj().src_pad().pad_flags().contains(gst::PadFlags::FLUSHING) {
                                 gst::FlowError::Flushing
                             } else {
+                                gst::error!(CAT, "Could not set caps: {e:?}");
                                 gst::FlowError::NotNegotiated
                             }
                         })?;
