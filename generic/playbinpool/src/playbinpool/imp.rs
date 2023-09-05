@@ -43,6 +43,7 @@ struct State {
     flushing: bool,
     seek_seqnum: Option<gst::Seqnum>,
     segment_seqnum: Option<gst::Seqnum>,
+    needs_segment: bool,
 }
 
 #[derive(Properties, Debug)]
@@ -273,9 +274,27 @@ impl PlaybinPoolSrc {
                     // Handle the case where the sink changed it EOS state
                     // between the pull and now
                     if is_eos || sink.is_eos() {
-                        if self.state.lock().unwrap().seek_seqnum.is_some() {
+                        let state = self.state.lock().unwrap();
+                        if state.seek_seqnum.is_some() {
                             gst::debug!(CAT, imp: self, "Got EOS while waiting for FLUSH_STOP");
                             continue;
+                        }
+
+                        if state.needs_segment {
+                            drop(state);
+
+                            if let Some(segment) = sink
+                                .sink_pads()
+                                .get(0)
+                                .unwrap()
+                                .sticky_event::<gst::event::Segment>(0)
+                            {
+                                gst::debug!(CAT,
+                                    imp: self,
+                                    "Pushing segment before returning EOS so downstream has the right seqnum");
+
+                                self.obj().push_segment(&segment.segment());
+                            }
                         }
 
                         gst::debug!(CAT, imp: self, "Got EOS");
@@ -341,7 +360,12 @@ impl PlaybinPoolSrc {
                     } else {
                         gst::debug!(CAT, imp: self, "Pushing new caps downstream");
                         self.obj().set_caps(&c.caps().to_owned()).map_err(|e| {
-                            if self.obj().src_pad().pad_flags().contains(gst::PadFlags::FLUSHING) {
+                            if self
+                                .obj()
+                                .src_pad()
+                                .pad_flags()
+                                .contains(gst::PadFlags::FLUSHING)
+                            {
                                 gst::FlowError::Flushing
                             } else {
                                 gst::error!(CAT, "Could not set caps: {e:?}");
@@ -395,6 +419,7 @@ impl PlaybinPoolSrc {
             ),
         ));
 
+        state.needs_segment = true;
         state.playbin = Some(playbin.clone());
     }
 
@@ -499,16 +524,18 @@ impl ObjectImpl for PlaybinPoolSrc {
                     },
                     gst::EventView::Segment(s) => {
                         gst::log!(CAT, imp: this, "Got segment {s:?}");
-                        let state = this.state.lock().unwrap();
+                        let mut state = this.state.lock().unwrap();
 
-                        if let Some(segment) = state.segment.as_ref().clone() {
-                            let mut builder = gst::event::Segment::builder(segment)
+                        let segment = state.segment.clone();
+                        if let Some(segment) = segment {
+                            let mut builder = gst::event::Segment::builder(&segment)
                                 .running_time_offset(event.running_time_offset());
 
                             if let Some(seqnum) = state.segment_seqnum.as_ref() {
                                 builder = builder.seqnum(*seqnum);
                             }
 
+                            state.needs_segment = false;
                             probe_info.data = Some(gst::PadProbeData::Event(builder.build()));
                         } else {
                             gst::debug!(CAT, imp: this, "Trying to push a segment before we received one, dropping it.");
@@ -610,9 +637,11 @@ impl BaseSrcImpl for PlaybinPoolSrc {
             if let gst::EventView::Seek(s) = seek_event.view() {
                 let values = s.get();
                 if values.1.contains(gst::SeekFlags::FLUSH) {
-                    gst::debug!(CAT, imp: self, "Flushing seek... waiting for flush-stop with right seqnum restarting pushing buffers");
-                    self.state.lock().unwrap().seek_seqnum = Some(seek_event.seqnum());
-                    self.state.lock().unwrap().segment_seqnum = Some(seek_event.seqnum());
+                    gst::debug!(CAT, imp: self, "Flushing seek... waiting for flush-stop with right seqnum ({:?}) restarting pushing buffers", seek_event.seqnum());
+                    let mut state = self.state.lock().unwrap();
+                    state.seek_seqnum = Some(seek_event.seqnum());
+                    state.segment_seqnum = Some(seek_event.seqnum());
+                    state.needs_segment = true;
                 }
 
                 values
