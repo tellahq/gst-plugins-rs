@@ -37,14 +37,22 @@ impl Default for PooledPlayBin {
             .downcast::<gst::Bin>()
             .unwrap();
 
-        uridecodebin.connect_deep_element_added(|_, _, element| {
-            if element.factory() == gst::ElementFactory::find("multiqueue") {
-                // FIXME - in multiqueue fix the logic for pushing on unlinked pads
-                // so it doesn't wait forever in many of our case.
-                // We do not care about unlinked pads streams ourselves!
-                element.set_property("unlinked-cache-time", gst::ClockTime::from_seconds(86400));
+        // FIXME - in multiqueue fix the logic for pushing on unlinked pads
+        // so it doesn't wait forever in many of our case.
+        // We do not care about unlinked pads streams ourselves!
+        {
+            for element in uridecodebin.iterate_all_by_element_factory_name("multiqueue") {
+                if let Ok(element) = element {
+                    element.set_property("unlinked-cache-time", gst::ClockTime::from_seconds(86400));
+                }
             }
-        });
+
+            uridecodebin.connect_deep_element_added(|_, _, element| {
+                if element.factory() == gst::ElementFactory::find("multiqueue") {
+                    element.set_property("unlinked-cache-time", gst::ClockTime::from_seconds(86400));
+                }
+            });
+        }
 
         pipeline.add(&uridecodebin).unwrap();
         let sink = gst_app::AppSink::builder()
