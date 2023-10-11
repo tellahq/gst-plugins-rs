@@ -44,6 +44,7 @@ struct State {
     seek_seqnum: Option<gst::Seqnum>,
     segment_seqnum: Option<gst::Seqnum>,
     needs_segment: bool,
+    seek_segment: Option<gst::Segment>,
 }
 
 #[derive(Properties, Debug)]
@@ -281,8 +282,10 @@ impl PlaybinPoolSrc {
                         }
 
                         if state.needs_segment {
+                            let seek_segment = state.seek_segment.clone();
                             drop(state);
 
+                            gst::debug!(CAT, imp: self, "Needs segment!");
                             if let Some(segment) = sink
                                 .sink_pads()
                                 .get(0)
@@ -294,6 +297,12 @@ impl PlaybinPoolSrc {
                                     "Pushing segment before returning EOS so downstream has the right seqnum");
 
                                 self.obj().push_segment(&segment.segment());
+                            } else {
+                                gst::debug!(CAT, imp: self, "Sticky segment not found!");
+                                if let Some(seek_segment) = seek_segment {
+                                    gst::debug!(CAT, imp: self, "Pushing original seek segment");
+                                    self.obj().push_segment(&seek_segment);
+                                }
                             }
                         }
 
@@ -476,6 +485,7 @@ impl ObjectImpl for PlaybinPoolSrc {
     }
 
     fn constructed(&self) {
+        self.parent_constructed();
         self.obj().set_format(gst::Format::Time);
         self.obj().set_async(true);
         self.obj().set_automatic_eos(false);
@@ -548,8 +558,6 @@ impl ObjectImpl for PlaybinPoolSrc {
 
                 gst::PadProbeReturn::Ok
             }));
-
-        self.parent_constructed();
     }
 }
 
@@ -642,6 +650,7 @@ impl BaseSrcImpl for PlaybinPoolSrc {
                     state.seek_seqnum = Some(seek_event.seqnum());
                     state.segment_seqnum = Some(seek_event.seqnum());
                     state.needs_segment = true;
+                    state.seek_segment = Some(segment.clone());
                 }
 
                 values
