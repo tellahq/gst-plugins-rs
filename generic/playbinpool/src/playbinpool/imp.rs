@@ -539,7 +539,9 @@ impl ObjectImpl for PlaybinPoolSrc {
                         let segment = state.segment.clone();
                         if let Some(segment) = segment {
                             let mut builder = gst::event::Segment::builder(&segment)
-                                .running_time_offset(event.running_time_offset());
+                                .running_time_offset(event.running_time_offset())
+                                .seqnum(event.seqnum());
+
 
                             if let Some(seqnum) = state.segment_seqnum.as_ref() {
                                 builder = builder.seqnum(*seqnum);
