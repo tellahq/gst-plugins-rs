@@ -43,13 +43,15 @@ impl Default for PooledPlayBin {
         {
             for element in uridecodebin.iterate_all_by_element_factory_name("multiqueue") {
                 if let Ok(element) = element {
-                    element.set_property("unlinked-cache-time", gst::ClockTime::from_seconds(86400));
+                    element
+                        .set_property("unlinked-cache-time", gst::ClockTime::from_seconds(86400));
                 }
             }
 
             uridecodebin.connect_deep_element_added(|_, _, element| {
                 if element.factory() == gst::ElementFactory::find("multiqueue") {
-                    element.set_property("unlinked-cache-time", gst::ClockTime::from_seconds(86400));
+                    element
+                        .set_property("unlinked-cache-time", gst::ClockTime::from_seconds(86400));
                 }
             });
         }

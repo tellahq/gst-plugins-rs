@@ -815,7 +815,9 @@ impl BaseSrcImpl for PlaybinPoolSrc {
                 }
             }
             gst::QueryViewMut::Custom(s) => {
-                if s.structure().map_or(false, |s| s.name().as_str() == "can-seek-in-null") {
+                if s.structure()
+                    .map_or(false, |s| s.name().as_str() == "can-seek-in-null")
+                {
                     gst::error!(CAT, "Can seek in NULL");
                     s.structure_mut().set("res", true);
 

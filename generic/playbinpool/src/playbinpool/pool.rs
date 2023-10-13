@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use std::sync::{Mutex, MutexGuard, Condvar};
+use std::sync::{Condvar, Mutex, MutexGuard};
 
 use gst::{
     glib::{self, once_cell::sync::Lazy, Properties},
@@ -153,7 +153,7 @@ impl PlaybinPool {
         self.set_cleanup_timeout(0);
 
         let mut state = self.state.lock().unwrap();
-        while let Some(pipeline) = state.prepared_pipelines.pop(){
+        while let Some(pipeline) = state.prepared_pipelines.pop() {
             if let Err(err) = pipeline.imp().release() {
                 gst::error!(CAT, "Failed to release pipeline: {}", err);
             }
@@ -275,7 +275,7 @@ impl PlaybinPool {
 
                 let pipeline = PooledPlayBin::new(uri.as_ref(), stream_type, stream_id.as_deref());
                 let obj = self.obj();
-                let mut outstandings = self.outstandings.n.lock().unwrap() ;
+                let mut outstandings = self.outstandings.n.lock().unwrap();
                 *outstandings += 1;
                 self.outstandings.cond.notify_one();
 
@@ -348,7 +348,7 @@ impl PlaybinPool {
             pipeline.imp().stop();
         }
 
-        let mut outstandings = self.outstandings.n.lock().unwrap() ;
+        let mut outstandings = self.outstandings.n.lock().unwrap();
         *outstandings -= removed as u32;
         self.outstandings.cond.notify_one();
         drop(outstandings);
