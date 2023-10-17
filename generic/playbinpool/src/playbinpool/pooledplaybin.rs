@@ -259,6 +259,7 @@ impl PooledPlayBin {
     }
 
     pub(crate) fn release(&self) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
+        gst::debug!(CAT, "Releasing pipeline {}", self.name);
         self.set_target_src(None);
 
         let obj = self.obj().clone();
@@ -279,7 +280,6 @@ impl PooledPlayBin {
         state.stream = None;
         drop(state);
 
-        gst::debug!(CAT, "Releasing pipeline {}", self.name);
         Ok(gst::StateChangeSuccess::Success)
     }
 
