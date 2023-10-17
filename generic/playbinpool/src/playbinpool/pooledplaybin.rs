@@ -130,15 +130,16 @@ impl PooledPlayBin {
         state.stream = None;
         state.stream_id = stream_id.map(|s| s.to_string());
         state.stream_type = stream_type;
-        let bus = self.pipeline.bus().unwrap();
-        bus.enable_sync_message_emission();
-        state.bus_message_sigid = Some(bus.connect_sync_message(
-            None,
-            glib::clone!(@weak self as this => move |_, msg|
-                this.handle_bus_message(msg)
-            ),
-        ));
-
+        if state.bus_message_sigid.is_none() {
+            let bus = self.pipeline.bus().unwrap();
+            bus.enable_sync_message_emission();
+            state.bus_message_sigid = Some(bus.connect_sync_message(
+                None,
+                glib::clone!(@weak self as this => move |_, msg|
+                             this.handle_bus_message(msg)
+                ),
+            ));
+        }
         self.set_uri(uri);
     }
 
