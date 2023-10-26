@@ -720,17 +720,27 @@ impl BaseSrcImpl for PlaybinPoolSrc {
     fn negotiate(&self) -> Result<(), gst::LoggableError> {
         gst::info!(CAT, imp: self, "Caps changed, renegotiating");
 
-        let caps = self
-            .process_objects(Some(gst::EventType::Caps))
-            .map_or_else(
-                |e| {
-                    Err(gst::loggable_error!(
+        let caps = match self.process_objects(Some(gst::EventType::Caps)) {
+            Ok(caps) => caps.downcast::<gst::Caps>().unwrap(),
+            Err(e) => {
+                if e == gst::FlowError::Eos {
+                    let playbin = self.playbin().unwrap();
+                    let sink = playbin.sink();
+                    let sink_pad = sink.static_pad("sink").unwrap();
+                    if let Some(caps) = sink_pad.sticky_event::<gst::event::Caps>(0) {
+                        caps.caps_owned()
+                    } else {
+                        gst::info!(CAT, imp: self, "No sticky caps event on sink. Faking success.");
+                        return Ok(());
+                    }
+                } else {
+                    return Err(gst::loggable_error!(
                         CAT,
                         format!("No caps on appsink after prerolling {e:?}")
-                    ))
-                },
-                |caps| Ok(caps.downcast::<gst::Caps>().unwrap()),
-            )?;
+                    ));
+                }
+            }
+        };
 
         gst::debug!(CAT, imp: self, "Negotiated caps: {:?}", caps);
         self.obj()
