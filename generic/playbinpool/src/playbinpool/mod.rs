@@ -37,11 +37,11 @@ impl PooledPlayBin {
         self.imp().requested_stream_id()
     }
 
-    pub(crate) fn sink(&self) -> gst_app::AppSink {
+    pub(crate) fn sink(&self) -> &gst_app::AppSink {
         self.imp().sink()
     }
 
-    pub(crate) fn pipeline(&self) -> gst::Pipeline {
+    pub(crate) fn pipeline(&self) -> &gst::Pipeline {
         self.imp().pipeline()
     }
 
@@ -53,7 +53,7 @@ impl PooledPlayBin {
         self.imp().stream()
     }
 
-    pub(crate) fn uridecodebin(&self) -> gst::Element {
+    pub(crate) fn uridecodebin(&self) -> &gst::Element {
         self.imp().uridecodebin()
     }
 

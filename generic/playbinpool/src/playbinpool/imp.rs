@@ -134,7 +134,7 @@ impl PlaybinPoolSrc {
             .ok()?;
 
         file.write_all(
-            gst::debug_bin_to_dot_data(&pipeline, gst::DebugGraphDetails::all()).as_bytes(),
+            gst::debug_bin_to_dot_data(pipeline, gst::DebugGraphDetails::all()).as_bytes(),
         )
         .map_err(|e| {
             gst::warning!(CAT, imp: self, "Failed to write dot file: {e:?}");
@@ -515,7 +515,7 @@ impl ObjectImpl for PlaybinPoolSrc {
                                 settings.stream_id.as_ref().map_or_else(|| stream_id.as_str(), |id| {
                                     let pipeline = playbin.pipeline();
                                     if id.as_str() != stream_id.as_str() {
-                                        gst::debug_bin_to_dot_file_with_ts(&pipeline, gst::DebugGraphDetails::all(), format!("{}-wrong-stream-id", this.obj().name()));
+                                        gst::debug_bin_to_dot_file_with_ts(pipeline, gst::DebugGraphDetails::all(), format!("{}-wrong-stream-id", this.obj().name()));
                                         gst::info!(CAT, imp: this, "Selected wrong stream ID {}, {} could probably not be found \
                                             FAKING selected stream ID", stream_id, id)
                                     }

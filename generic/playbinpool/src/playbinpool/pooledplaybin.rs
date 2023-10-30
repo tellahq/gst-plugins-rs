@@ -112,12 +112,12 @@ impl PooledPlayBin {
         self.state.lock().unwrap().stream_id.clone()
     }
 
-    pub(crate) fn sink(&self) -> gst_app::AppSink {
-        self.sink.clone()
+    pub(crate) fn sink(&self) -> &gst_app::AppSink {
+        &self.sink
     }
 
-    pub(crate) fn pipeline(&self) -> gst::Pipeline {
-        self.pipeline.clone()
+    pub(crate) fn pipeline(&self) -> &gst::Pipeline {
+        &self.pipeline
     }
 
     pub(crate) fn name(&self) -> &str {
@@ -232,8 +232,8 @@ impl PooledPlayBin {
         self.state.lock().unwrap().stream.clone()
     }
 
-    pub(crate) fn uridecodebin(&self) -> gst::Element {
-        self.uridecodebin.clone()
+    pub(crate) fn uridecodebin(&self) -> &gst::Element {
+        &self.uridecodebin
     }
 
     fn set_uri(&self, uri: &str) {
