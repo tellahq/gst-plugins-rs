@@ -262,6 +262,16 @@ impl PooledPlayBin {
         self.set_target_src(None);
 
         let obj = self.obj().clone();
+
+        // Disconnect sync bus message handler and disable emission
+        let bus = self.pipeline.bus().unwrap();
+        if let Ok(mut state) = self.state.lock() {
+            if let Some(sigid) = state.bus_message_sigid.take() {
+                bus.disconnect(sigid);
+            }
+        }
+        bus.disable_sync_message_emission();
+
         self.pipeline.call_async(move |pipeline| {
             let this = obj.imp();
             let state_lock = this.state_lock.lock();

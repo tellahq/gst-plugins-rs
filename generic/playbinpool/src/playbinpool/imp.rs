@@ -808,13 +808,14 @@ impl BaseSrcImpl for PlaybinPoolSrc {
 
             let playbin = state.playbin.as_ref().unwrap().clone();
             let pipeline = playbin.pipeline();
+            let bus = pipeline.bus().unwrap();
             if let Some(sigid) = state.bus_message_sigid.take() {
-                pipeline.bus().unwrap().disconnect(sigid);
+                bus.disconnect(sigid);
             }
             if let Some(sigid) = state.source_setup_sigid.take() {
                 playbin.uridecodebin().disconnect(sigid);
             }
-            pipeline.bus().unwrap().disable_sync_message_emission();
+            bus.disable_sync_message_emission();
 
             state.start_completed = false;
             state.playbin.take().unwrap()
