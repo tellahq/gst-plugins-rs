@@ -33,7 +33,7 @@ impl Default for Settings {
 
 #[derive(Debug, Default)]
 struct State {
-    playbin: Option<PooledPlayBin>,
+    playbin: glib::WeakRef<PooledPlayBin>,
     bus_message_sigid: Option<glib::SignalHandlerId>,
     source_setup_sigid: Option<glib::SignalHandlerId>,
     start_completed: bool,
@@ -110,7 +110,7 @@ impl PlaybinPoolSrc {
             return None;
         }
 
-        let playbin = match self.state.lock().unwrap().playbin.as_ref() {
+        let playbin = match self.state.lock().unwrap().playbin.upgrade() {
             Some(playbin) => playbin.clone(),
             None => {
                 gst::info!(CAT, imp: self, "No playbin to dump");
@@ -151,7 +151,7 @@ impl PlaybinPoolSrc {
         let (playbin, start_completed) = {
             let state = self.state.lock().unwrap();
 
-            if let Some(ref playbin) = state.playbin {
+            if let Some(ref playbin) = state.playbin.upgrade() {
                 (playbin.clone(), state.start_completed)
             } else {
                 gst::debug!(CAT, imp: self, "Got message {:?} without playbin", message);
@@ -224,7 +224,7 @@ impl PlaybinPoolSrc {
                 || event_type == Some(gst::EventType::Segment)
         );
 
-        let playbin = self.state.lock().unwrap().playbin.as_ref().unwrap().clone();
+        let playbin = self.state.lock().unwrap().playbin.upgrade().unwrap();
         let sink = playbin.sink();
         let sink_sinkpad = playbin.sink().sink_pads().get(0).unwrap().clone();
 
@@ -429,10 +429,10 @@ impl PlaybinPoolSrc {
         ));
 
         state.needs_segment = true;
-        state.playbin = Some(playbin.clone());
+        state.playbin = playbin.downgrade();
     }
 
-    fn playbin(&self) -> Option<PooledPlayBin> {
+    fn playbin(&self) -> glib::WeakRef<PooledPlayBin> {
         self.state.lock().unwrap().playbin.clone()
     }
 }
@@ -499,7 +499,7 @@ impl ObjectImpl for PlaybinPoolSrc {
 
                 match event.view() {
                     gst::EventView::StreamStart(s) => {
-                        let playbin = this.state.lock().unwrap().playbin.as_ref().unwrap().clone();
+                        let playbin = this.state.lock().unwrap().playbin.upgrade().unwrap();
                         let stream = if let Some (stream) = playbin.stream() {
                             stream
                         } else {
@@ -640,7 +640,7 @@ impl BaseSrcImpl for PlaybinPoolSrc {
         let playbin = state.playbin.clone();
         drop(state);
 
-        if let Some(playbin) = playbin {
+        if let Some(playbin) = playbin.upgrade() {
             let pipeline = playbin.pipeline();
 
             gst::info!(CAT, imp: self, "Seeking to {segment:?}");
@@ -724,7 +724,7 @@ impl BaseSrcImpl for PlaybinPoolSrc {
             Ok(caps) => caps.downcast::<gst::Caps>().unwrap(),
             Err(e) => {
                 if e == gst::FlowError::Eos {
-                    let playbin = self.playbin().unwrap();
+                    let playbin = self.playbin().upgrade().unwrap();
                     let sink = playbin.sink();
                     let sink_pad = sink.static_pad("sink").unwrap();
                     if let Some(caps) = sink_pad.sticky_event::<gst::event::Caps>(0) {
@@ -798,30 +798,26 @@ impl BaseSrcImpl for PlaybinPoolSrc {
 
     fn stop(&self) -> Result<(), gst::ErrorMessage> {
         gst::debug!(CAT, imp: self, "Stopping");
-        let pipeline = {
-            let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
+        let pooledplaybin = state.playbin.upgrade().unwrap();
+        state.segment = None;
+        state.seek_seqnum = None;
+        state.segment_seqnum = None;
+        state.seek_event = None;
+        let pipeline = pooledplaybin.pipeline();
+        let bus = pipeline.bus().unwrap();
+        if let Some(sigid) = state.bus_message_sigid.take() {
+            bus.disconnect(sigid);
+        }
+        if let Some(sigid) = state.source_setup_sigid.take() {
+            pooledplaybin.uridecodebin().disconnect(sigid);
+        }
+        bus.disable_sync_message_emission();
 
-            state.segment = None;
-            state.seek_seqnum = None;
-            state.segment_seqnum = None;
-            state.seek_event = None;
-
-            let playbin = state.playbin.as_ref().unwrap().clone();
-            let pipeline = playbin.pipeline();
-            let bus = pipeline.bus().unwrap();
-            if let Some(sigid) = state.bus_message_sigid.take() {
-                bus.disconnect(sigid);
-            }
-            if let Some(sigid) = state.source_setup_sigid.take() {
-                playbin.uridecodebin().disconnect(sigid);
-            }
-            bus.disable_sync_message_emission();
-
-            state.start_completed = false;
-            state.playbin.take().unwrap()
-        };
-        gst::info!(CAT, imp: self, "Releasing {pipeline:?}");
-        self.pool.release(pipeline);
+        state.start_completed = false;
+        gst::info!(CAT, imp: self, "Releasing {pooledplaybin:?}");
+        self.pool.release(&pooledplaybin);
+        state.playbin.set(None);
 
         Ok(())
     }
@@ -833,7 +829,7 @@ impl BaseSrcImpl for PlaybinPoolSrc {
                 return true;
             }
             gst::QueryViewMut::Duration(_) => {
-                if let Some(playbin) = self.playbin() {
+                if let Some(playbin) = self.playbin().upgrade() {
                     return playbin.pipeline().query(query);
                 }
             }
@@ -845,7 +841,7 @@ impl BaseSrcImpl for PlaybinPoolSrc {
                     s.structure_mut().set("res", true);
 
                     return true;
-                } else if let Some(playbin) = self.playbin() {
+                } else if let Some(playbin) = self.playbin().upgrade() {
                     return playbin.pipeline().query(query);
                 }
             }

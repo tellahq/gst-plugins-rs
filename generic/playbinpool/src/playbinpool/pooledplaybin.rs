@@ -12,7 +12,7 @@ struct State {
     unused_since: Option<std::time::Instant>,
     bus_message_sigid: Option<glib::SignalHandlerId>,
 
-    target_src: Option<super::PlaybinPoolSrc>,
+    target_src: glib::WeakRef<super::PlaybinPoolSrc>,
 }
 
 pub struct PooledPlayBin {
@@ -75,7 +75,7 @@ impl Default for PooledPlayBin {
                 stream_id: None,
                 stream_type: gst::StreamType::VIDEO,
                 bus_message_sigid: None,
-                target_src: None,
+                target_src: glib::WeakRef::new(),
             }),
             state_lock: Mutex::new(false),
             name,
@@ -244,14 +244,14 @@ impl PooledPlayBin {
         self.pipeline.set_state(gst::State::Playing)
     }
 
-    pub(crate) fn target_src(&self) -> Option<super::PlaybinPoolSrc> {
+    pub(crate) fn target_src(&self) -> glib::WeakRef<super::PlaybinPoolSrc> {
         self.state.lock().unwrap().target_src.clone()
     }
 
-    pub(crate) fn set_target_src(&self, target_src: Option<super::PlaybinPoolSrc>) {
+    pub(crate) fn set_target_src(&self, target_src: glib::WeakRef<super::PlaybinPoolSrc>) {
         let mut state = self.state.lock().unwrap();
 
-        if target_src.is_some() {
+        if target_src.upgrade().is_some() {
             state.unused_since = None;
         }
         state.target_src = target_src;
@@ -259,7 +259,6 @@ impl PooledPlayBin {
 
     pub(crate) fn release(&self) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
         gst::debug!(CAT, "Releasing pipeline {}", self.name);
-        self.set_target_src(None);
 
         let obj = self.obj().clone();
 
@@ -269,6 +268,7 @@ impl PooledPlayBin {
             if let Some(sigid) = state.bus_message_sigid.take() {
                 bus.disconnect(sigid);
             }
+            state.target_src.set(None);
         }
         bus.disable_sync_message_emission();
 

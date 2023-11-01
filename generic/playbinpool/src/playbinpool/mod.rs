@@ -23,7 +23,7 @@ impl PlaybinPool {
         self.imp().get(src)
     }
 
-    pub(crate) fn release(&self, playbin: PooledPlayBin) {
+    pub(crate) fn release(&self, playbin: &PooledPlayBin) {
         self.imp().release(playbin)
     }
 }

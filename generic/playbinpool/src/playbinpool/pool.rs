@@ -170,10 +170,11 @@ impl PlaybinPool {
         gst::debug!(CAT, imp: self, "Unpreparing pipeline for {:?}", src);
 
         let mut state = self.state.lock().unwrap();
+        let downgraded_src = gst::prelude::ObjectExt::downgrade(src);
         if let Some(position) = state
             .prepared_pipelines
             .iter()
-            .position(|p| p.imp().target_src().as_ref() == Some(src))
+            .position(|p| p.imp().target_src() == downgraded_src)
         {
             let pipeline = state.prepared_pipelines.remove(position);
             drop(state);
@@ -193,10 +194,11 @@ impl PlaybinPool {
 
         let mut state = self.state.lock().unwrap();
 
+        let downgraded_src = gst::prelude::ObjectExt::downgrade(src);
         if state
             .prepared_pipelines
             .iter()
-            .any(|p| p.imp().target_src().as_ref() == Some(src))
+            .any(|p| p.imp().target_src() == downgraded_src)
         {
             gst::debug!(CAT, "Pipeline already prepared for {:?}", src);
 
@@ -220,10 +222,11 @@ impl PlaybinPool {
         gst::debug!(CAT, "Getting pipeline for {:?}", src);
         let mut state = self.state.lock().unwrap();
 
+        let downgraded_src = gst::prelude::ObjectExt::downgrade(src);
         let playbin = if let Some(position) = state
             .prepared_pipelines
             .iter()
-            .position(|p| p.imp().target_src().as_ref() == Some(src))
+            .position(|p| p.imp().target_src() == downgraded_src)
         {
             gst::debug!(CAT, "Using already prepared pipeline for {:?}", src);
 
@@ -285,8 +288,6 @@ impl PlaybinPool {
                     false,
                     glib::closure!(@watch obj => move
                         |pipeline: PooledPlayBin| {
-                            gst::debug!(CAT, obj: obj, "{pipeline:?} not used anymore.");
-
                             let this = obj.imp();
                             this.state.lock().unwrap().unused_pipelines.insert(0, pipeline);
 
@@ -316,7 +317,9 @@ impl PlaybinPool {
             },
         );
 
-        playbin.imp().set_target_src(Some(src.clone()));
+        playbin
+            .imp()
+            .set_target_src(gst::prelude::ObjectExt::downgrade(&src));
         playbin
     }
 
@@ -354,12 +357,12 @@ impl PlaybinPool {
         drop(outstandings);
     }
 
-    pub(crate) fn release(&self, pipeline: PooledPlayBin) {
+    pub(crate) fn release(&self, pipeline: &PooledPlayBin) {
         self.state
             .lock()
             .unwrap()
             .running_pipelines
-            .retain(|p| p != &pipeline);
+            .retain(|p| p != pipeline);
 
         if let Err(err) = pipeline.imp().release() {
             gst::error!(CAT, "Failed to release pipeline: {}", err);
