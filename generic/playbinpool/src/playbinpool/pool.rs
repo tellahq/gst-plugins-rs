@@ -59,7 +59,7 @@ struct Outstandings {
 #[properties(wrapper_type = super::PlaybinPool)]
 pub struct PlaybinPool {
     state: Mutex<State>,
-    // Number of pipelines in used */
+    /// Number of pipelines in use
     outstandings: Outstandings,
 
     #[property(name="cleanup-timeout",

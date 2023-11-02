@@ -319,6 +319,7 @@ impl ObjectImpl for PooledPlayBin {
     }
 
     fn constructed(&self) {
+        self.parent_constructed();
         self.uridecodebin
             .connect_pad_added(glib::clone!(@weak self as this => move |_, pad| {
                     this.pad_added(pad);

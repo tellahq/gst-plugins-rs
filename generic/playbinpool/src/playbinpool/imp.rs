@@ -110,8 +110,8 @@ impl PlaybinPoolSrc {
             return None;
         }
 
-        let playbin = match self.state.lock().unwrap().playbin.upgrade() {
-            Some(playbin) => playbin.clone(),
+        let playbin = match self.playbin() {
+            Some(playbin) => playbin,
             None => {
                 gst::info!(CAT, imp: self, "No playbin to dump");
                 return None;
@@ -224,7 +224,7 @@ impl PlaybinPoolSrc {
                 || event_type == Some(gst::EventType::Segment)
         );
 
-        let playbin = self.state.lock().unwrap().playbin.upgrade().unwrap();
+        let playbin = self.playbin().unwrap();
         let sink = playbin.sink();
         let sink_sinkpad = playbin.sink().sink_pads().get(0).unwrap().clone();
 
@@ -311,11 +311,7 @@ impl PlaybinPoolSrc {
                     }
 
                     if self.state.lock().unwrap().flushing {
-                        gst::debug!(
-                            CAT,
-                            imp: self,
-                            "Flushing"
-                        );
+                        gst::debug!(CAT, imp: self, "Flushing");
                         return Err(gst::FlowError::Flushing);
                     }
 
@@ -432,8 +428,8 @@ impl PlaybinPoolSrc {
         state.playbin = playbin.downgrade();
     }
 
-    fn playbin(&self) -> glib::WeakRef<PooledPlayBin> {
-        self.state.lock().unwrap().playbin.clone()
+    fn playbin(&self) -> Option<PooledPlayBin> {
+        self.state.lock().unwrap().playbin.upgrade()
     }
 }
 
@@ -499,7 +495,7 @@ impl ObjectImpl for PlaybinPoolSrc {
 
                 match event.view() {
                     gst::EventView::StreamStart(s) => {
-                        let playbin = this.state.lock().unwrap().playbin.upgrade().unwrap();
+                        let playbin = this.playbin().unwrap();
                         let stream = if let Some (stream) = playbin.stream() {
                             stream
                         } else {
@@ -724,13 +720,17 @@ impl BaseSrcImpl for PlaybinPoolSrc {
             Ok(caps) => caps.downcast::<gst::Caps>().unwrap(),
             Err(e) => {
                 if e == gst::FlowError::Eos {
-                    let playbin = self.playbin().upgrade().unwrap();
+                    let playbin = self.playbin().unwrap();
                     let sink = playbin.sink();
                     let sink_pad = sink.static_pad("sink").unwrap();
                     if let Some(caps) = sink_pad.sticky_event::<gst::event::Caps>(0) {
                         caps.caps_owned()
                     } else {
-                        gst::info!(CAT, imp: self, "No sticky caps event on sink. Faking success.");
+                        gst::info!(
+                            CAT,
+                            imp: self,
+                            "No sticky caps event on sink. Faking success."
+                        );
                         return Ok(());
                     }
                 } else {
@@ -798,26 +798,31 @@ impl BaseSrcImpl for PlaybinPoolSrc {
 
     fn stop(&self) -> Result<(), gst::ErrorMessage> {
         gst::debug!(CAT, imp: self, "Stopping");
-        let mut state = self.state.lock().unwrap();
-        let pooledplaybin = state.playbin.upgrade().unwrap();
-        state.segment = None;
-        state.seek_seqnum = None;
-        state.segment_seqnum = None;
-        state.seek_event = None;
-        let pipeline = pooledplaybin.pipeline();
-        let bus = pipeline.bus().unwrap();
-        if let Some(sigid) = state.bus_message_sigid.take() {
-            bus.disconnect(sigid);
-        }
-        if let Some(sigid) = state.source_setup_sigid.take() {
-            pooledplaybin.uridecodebin().disconnect(sigid);
-        }
-        bus.disable_sync_message_emission();
+        let pooledplaybin = {
+            let mut state = self.state.lock().unwrap();
+            let pooledplaybin = state.playbin.upgrade().unwrap();
+            state.segment = None;
+            state.seek_seqnum = None;
+            state.segment_seqnum = None;
+            state.seek_event = None;
+            let pipeline = pooledplaybin.pipeline();
+            let bus = pipeline.bus().unwrap();
+            if let Some(sigid) = state.bus_message_sigid.take() {
+                bus.disconnect(sigid);
+            }
+            if let Some(sigid) = state.source_setup_sigid.take() {
+                pooledplaybin.uridecodebin().disconnect(sigid);
+            }
+            bus.disable_sync_message_emission();
 
-        state.start_completed = false;
+            state.start_completed = false;
+            state.playbin.set(None);
+
+            pooledplaybin
+        };
+
         gst::info!(CAT, imp: self, "Releasing {pooledplaybin:?}");
         self.pool.release(&pooledplaybin);
-        state.playbin.set(None);
 
         Ok(())
     }
@@ -829,7 +834,7 @@ impl BaseSrcImpl for PlaybinPoolSrc {
                 return true;
             }
             gst::QueryViewMut::Duration(_) => {
-                if let Some(playbin) = self.playbin().upgrade() {
+                if let Some(playbin) = self.playbin() {
                     return playbin.pipeline().query(query);
                 }
             }
@@ -841,7 +846,7 @@ impl BaseSrcImpl for PlaybinPoolSrc {
                     s.structure_mut().set("res", true);
 
                     return true;
-                } else if let Some(playbin) = self.playbin().upgrade() {
+                } else if let Some(playbin) = self.playbin() {
                     return playbin.pipeline().query(query);
                 }
             }
