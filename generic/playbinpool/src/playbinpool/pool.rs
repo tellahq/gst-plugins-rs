@@ -84,6 +84,9 @@ impl ObjectImpl for PlaybinPool {
     fn signals() -> &'static [glib::subclass::Signal] {
         static SIGNALS: Lazy<Vec<glib::subclass::Signal>> = Lazy::new(|| {
             vec![
+                glib::subclass::Signal::builder("new-pipeline")
+                    .param_types([gst::Pipeline::static_type()])
+                    .build(),
                 glib::subclass::Signal::builder("prepare-pipeline")
                     .param_types([super::PlaybinPoolSrc::static_type()])
                     .return_type::<bool>()
@@ -304,6 +307,8 @@ impl PlaybinPool {
                         }
                     ),
                 );
+
+                obj.emit_by_name::<()>("new-pipeline", &[&pipeline.pipeline()]);
 
                 pipeline
             },
