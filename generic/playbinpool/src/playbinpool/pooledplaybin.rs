@@ -1,6 +1,7 @@
 use std::sync::Mutex;
 
 use gst::{glib, glib::once_cell::sync::Lazy, prelude::*, subclass::prelude::*};
+use gst_app::prelude::BaseSinkExt;
 
 use super::pool::CAT;
 
@@ -61,6 +62,9 @@ impl Default for PooledPlayBin {
             .enable_last_sample(false)
             .max_buffers(1)
             .build();
+        sink.dynamic_cast_ref::<gst_base::BaseSink>()
+            .unwrap()
+            .set_drop_out_of_segment(false);
         pipeline.add(&sink).unwrap();
 
         let name = pipeline.name().to_string();
