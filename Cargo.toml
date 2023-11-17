@@ -6,7 +6,6 @@ members = [
 
     "audio/audiofx",
     "audio/claxon",
-    "audio/csound",
     "audio/lewton",
     "audio/spotify",
 

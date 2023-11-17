@@ -248,7 +248,7 @@ impl PlaybinPoolSrc {
             {
                 match event_type {
                     Some(gst::EventType::Caps) => {
-                        if let Some(caps) = sink_sinkpad.caps() {
+                        if let Some(caps) = sink_sinkpad.current_caps() {
                             return return_func(self, caps.upcast());
                         }
                     }
@@ -736,7 +736,7 @@ impl BaseSrcImpl for PlaybinPoolSrc {
                 } else {
                     return Err(gst::loggable_error!(
                         CAT,
-                        format!("No caps on appsink after prerolling {e:?}")
+                        "No caps on appsink after prerolling {e:?}"
                     ));
                 }
             }
