@@ -165,7 +165,7 @@ impl PooledPlayBin {
 
                     Some(stream)
                 } else {
-                    gst::warning!(
+                    gst::debug!(
                         CAT,
                         imp: self,
                         "{:?} requested stream {} not found in {} - available: {:?}",
