@@ -134,7 +134,9 @@ impl PlaybinPoolSrc {
             .ok()?;
 
         file.write_all(
-            gst::debug_bin_to_dot_data(&pipeline, gst::DebugGraphDetails::all()).as_bytes(),
+            pipeline
+                .debug_to_dot_data(gst::DebugGraphDetails::all())
+                .as_bytes(),
         )
         .map_err(|e| {
             gst::warning!(CAT, imp: self, "Failed to write dot file: {e:?}");
@@ -248,7 +250,7 @@ impl PlaybinPoolSrc {
             {
                 match event_type {
                     Some(gst::EventType::Caps) => {
-                        if let Some(caps) = sink_sinkpad.caps() {
+                        if let Some(caps) = sink_sinkpad.current_caps() {
                             return return_func(self, caps.upcast());
                         }
                     }
@@ -515,7 +517,7 @@ impl ObjectImpl for PlaybinPoolSrc {
                                 settings.stream_id.as_ref().map_or_else(|| stream_id.as_str(), |id| {
                                     let pipeline = playbin.pipeline();
                                     if id.as_str() != stream_id.as_str() {
-                                        gst::debug_bin_to_dot_file_with_ts(&pipeline, gst::DebugGraphDetails::all(), format!("{}-wrong-stream-id", this.obj().name()));
+                                        pipeline.debug_to_dot_file_with_ts(gst::DebugGraphDetails::all(), format!("{}-wrong-stream-id", this.obj().name()));
                                         gst::info!(CAT, imp: this, "Selected wrong stream ID {}, {} could probably not be found \
                                             FAKING selected stream ID", stream_id, id)
                                     }
@@ -736,7 +738,7 @@ impl BaseSrcImpl for PlaybinPoolSrc {
                 } else {
                     return Err(gst::loggable_error!(
                         CAT,
-                        format!("No caps on appsink after prerolling {e:?}")
+                        "No caps on appsink after prerolling {e:?}"
                     ));
                 }
             }
