@@ -1348,7 +1348,7 @@ impl FMP4Mux {
         // Calculate the earliest PTS after queueing input if we can now.
         let mut earliest_pts = None;
         let mut start_dts = None;
-        for stream in &state.streams {
+        for stream in &mut state.streams {
             let (stream_earliest_pts, stream_start_dts) = match stream.queued_gops.back() {
                 None => {
                     if !all_eos && !timeout {
@@ -2025,6 +2025,16 @@ impl FMP4Mux {
             settings.chunk_duration.map(|duration| chunk_start_pts + duration).display(),
         );
 
+        let obj = self.obj();
+        let start_time_offset = if obj
+            .property::<gst_base::AggregatorStartTimeSelection>("start-time-selection")
+            == gst_base::AggregatorStartTimeSelection::Set
+        {
+            obj.property::<Option<gst::ClockTime>>("start-time")
+                .unwrap_or(gst::ClockTime::ZERO)
+        } else {
+            gst::ClockTime::ZERO
+        };
         for (idx, stream) in state.streams.iter_mut().enumerate() {
             let stream_settings = stream.sinkpad.imp().settings.lock().unwrap().clone();
 
@@ -2209,7 +2219,7 @@ impl FMP4Mux {
             drained_streams.push((
                 super::FragmentHeaderStream {
                     caps: stream.caps.clone(),
-                    start_time: Some(start_time),
+                    start_time: Some(start_time + start_time_offset),
                     delta_frames: stream.delta_frames,
                     trak_timescale: stream_settings.trak_timescale,
                 },
