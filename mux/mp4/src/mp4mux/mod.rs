@@ -97,6 +97,12 @@ pub(crate) struct Chunk {
     samples: Vec<Sample>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct ElstInfo {
+    start: i64,
+    duration: Option<u64>,
+}
+
 #[derive(Debug)]
 pub(crate) struct Stream {
     /// Caps of this stream
@@ -106,15 +112,7 @@ pub(crate) struct Stream {
     delta_frames: DeltaFrames,
 
     /// Pre-defined trak timescale if not 0.
-    trak_timescale: u32,
-
-    /// Start DTS
-    ///
-    /// If this is negative then an edit list entry is needed to
-    /// make all sample times positive.
-    ///
-    /// This is `None` for streams that have no concept of DTS.
-    start_dts: Option<gst::Signed<gst::ClockTime>>,
+    timescale: u32,
 
     /// Earliest PTS
     ///
@@ -126,6 +124,9 @@ pub(crate) struct Stream {
 
     /// All the chunks stored for this stream
     chunks: Vec<Chunk>,
+
+    /// Edit list clgpping informations
+    elst_infos: Vec<ElstInfo>,
 }
 
 #[derive(Debug)]
