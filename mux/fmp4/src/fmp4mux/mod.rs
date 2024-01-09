@@ -91,6 +91,12 @@ pub(crate) struct HeaderConfiguration {
     start_utc_time: Option<u64>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct ElstInfo {
+    start: i64,
+    duration: Option<u64>,
+}
+
 #[derive(Debug)]
 pub(crate) struct HeaderStream {
     /// Caps of this stream
@@ -101,6 +107,9 @@ pub(crate) struct HeaderStream {
 
     /// Pre-defined trak timescale if not 0.
     trak_timescale: u32,
+
+    /// Edit list clipping informations
+    elst_infos: Vec<ElstInfo>,
 }
 
 #[derive(Debug)]
