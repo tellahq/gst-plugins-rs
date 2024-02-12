@@ -169,6 +169,10 @@ impl PlaybinPoolSrc {
                     gst::warning!(CAT, imp: self, "Failed to forward message: {e:?}");
                 }
             }
+            gst::MessageView::Error(s) => {
+                gst::error!(CAT, imp: self, "Got error message: {s}");
+                self.obj().post_message(s.message().to_owned()).unwrap();
+            }
             gst::MessageView::StateChanged(s) => {
                 if !start_completed
                     && s.src() == Some(playbin.pipeline().upcast_ref())
