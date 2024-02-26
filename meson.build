@@ -212,6 +212,7 @@ plugins = {
   },
   'gopbuffer': {'library': 'libgstgopbuffer'},
   'quinn': {'library': 'libgstquinn'},
+  'skia': {'library': 'libgstskia'},
   'speechmatics': {'library': 'libgstspeechmatics'},
 }
 
