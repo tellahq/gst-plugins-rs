@@ -3,7 +3,6 @@ use gst::glib::Properties;
 use gst_base::subclass::prelude::*;
 use gst_video::{prelude::*, subclass::prelude::*};
 use once_cell::sync::Lazy;
-use std::sync::Mutex;
 
 use super::*;
 
@@ -14,6 +13,26 @@ static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
         Some("Skia compositor"),
     )
 });
+
+mod video_format {
+    static MAPPINGS: &[(skia::ColorType, gst_video::VideoFormat)] = &[
+        (skia::ColorType::RGBA8888, gst_video::VideoFormat::Rgba),
+        (skia::ColorType::BGRA8888, gst_video::VideoFormat::Bgra),
+        (skia::ColorType::RGB888x, gst_video::VideoFormat::Rgbx),
+        (skia::ColorType::RGB565, gst_video::VideoFormat::Rgb16),
+        (skia::ColorType::Gray8, gst_video::VideoFormat::Gray8),
+    ];
+
+    pub fn gst_to_skia(video_format: gst_video::VideoFormat) -> Option<skia::ColorType> {
+        MAPPINGS
+            .iter()
+            .find_map(|&(ct, vf)| (vf == video_format).then_some(ct))
+    }
+
+    pub fn gst_formats() -> Vec<gst_video::VideoFormat> {
+        MAPPINGS.iter().map(|&(_, vf)| vf).collect()
+    }
+}
 
 #[derive(glib::Enum, Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 #[enum_type(name = "GstSkiaCompositorBackground")]
@@ -51,12 +70,11 @@ impl SkiaCompositor {
             SkiaCompositorBackground::White => paint.set_color(skia::Color::WHITE),
             SkiaCompositorBackground::Transparent => paint.set_color(skia::Color::TRANSPARENT),
             SkiaCompositorBackground::Checker => {
-                let square_size = 10;
+                let square_size: f32 = 10.;
                 let size = canvas.base_layer_size();
 
-                for i in 0..(size.width / square_size) {
-                    for j in 0..(size.height / square_size) {
-                        // Determine the color of the current square.
+                for i in 0..(size.width / square_size as i32) {
+                    for j in 0..(size.height / square_size as i32) {
                         let is_even = (i + j) % 2 == 0;
                         paint.set_color(if is_even {
                             skia::Color::DARK_GRAY
@@ -64,13 +82,10 @@ impl SkiaCompositor {
                             skia::Color::GRAY
                         });
 
-                        // Calculate the top-left corner of the current square.
-                        let x = i as f32 * square_size as f32;
-                        let y = j as f32 * square_size as f32;
+                        let x = i as f32 * square_size;
+                        let y = j as f32 * square_size;
 
-                        // Draw the square.
-                        let rect =
-                            skia::Rect::from_xywh(x, y, square_size as f32, square_size as f32);
+                        let rect = skia::Rect::from_xywh(x, y, square_size, square_size);
                         canvas.draw_rect(rect, &paint);
                     }
                 }
@@ -125,19 +140,19 @@ impl ElementImpl for SkiaCompositor {
                     "src",
                     gst::PadDirection::Src,
                     gst::PadPresence::Always,
+                    // Support formats supported by Skia and GStreamer on the src side
                     &gst_video::VideoCapsBuilder::new()
-                        .format_list([gst_video::VideoFormat::Rgba])
-                        .build(),
+                        .format_list(video_format::gst_formats())
+                        .build();
                 )
                 .unwrap(),
                 gst::PadTemplate::with_gtype(
                     "sink_%u",
                     gst::PadDirection::Sink,
                     gst::PadPresence::Request,
-                    // TODO Implement more formats!
-                    &gst_video::VideoCapsBuilder::new()
-                        .format_list([gst_video::VideoFormat::Rgba])
-                        .build(),
+                    // Support all formats as inputs will be converted to the output format
+                    // automatically by the VideoAggregatorConvertPad base class
+                    &gst_video::VideoCapsBuilder::new().build(),
                     SkiaCompositorPad::static_type(),
                 )
                 .unwrap(),
@@ -234,7 +249,7 @@ impl VideoAggregatorImpl for SkiaCompositor {
         let height = out_info.height() as i32;
         let out_img_info = skia::ImageInfo::new(
             skia::ISize { width, height },
-            skia::ColorType::RGBA8888,
+            video_format::gst_to_skia(out_info.format()).unwrap(),
             skia::AlphaType::Unpremul,
             None,
         );
@@ -250,6 +265,8 @@ impl VideoAggregatorImpl for SkiaCompositor {
             let pad = pad.downcast_ref::<SkiaCompositorPad>().unwrap();
 
             let mut paint = skia::Paint::default();
+
+            paint.set_anti_alias(pad.anti_alias());
             paint.set_blend_mode(pad.operator().into());
 
             let frame = match pad.prepared_frame(token) {
@@ -275,7 +292,7 @@ impl VideoAggregatorImpl for SkiaCompositor {
                     frame.info().stride()[0] as usize,
                 )
             }
-            .unwrap();
+            .expect("Wrong image parameters to raster from data.");
 
             let mut desired_width = pad.width();
             if desired_width <= 0. {

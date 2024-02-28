@@ -13,6 +13,7 @@ pub struct Settings {
     ypos: f32,
     width: f32,
     height: f32,
+    anti_alias: bool,
 }
 
 impl Default for Settings {
@@ -23,6 +24,7 @@ impl Default for Settings {
             ypos: 0.0,
             width: -1.0,
             height: -1.0,
+            anti_alias: true,
         }
     }
 }
@@ -118,6 +120,7 @@ pub struct SkiaCompositorPad {
     #[property(get, set, type = f32, name = "ypos", nick = "Y Position", blurb = "Vertical position of the input", minimum = f32::MIN, maximum = f32::MAX, member = ypos)]
     #[property(get, set, type = f32, name = "width", nick = "Width", blurb = "Width of the picture", minimum = -1.0, maximum = f32::MAX, member = width, default = -1.0)]
     #[property(get, set, type = f32, name = "height", nick = "Height", blurb = "Height of the picture", minimum = -1.0, maximum = f32::MAX, member = height, default = -1.0)]
+    #[property(get, set, type = bool, name = "anti-alias", nick = "Anti-alias", blurb = "Whether to use anti-aliasing", member = anti_alias, default = true)]
     pub settings: Mutex<Settings>,
     #[property(
         get,
