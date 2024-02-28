@@ -3,6 +3,7 @@ use gst::glib::Properties;
 use gst_base::subclass::prelude::*;
 use gst_video::{prelude::*, subclass::prelude::*};
 use once_cell::sync::Lazy;
+use std::sync::Mutex;
 
 use super::*;
 
@@ -46,7 +47,7 @@ pub enum SkiaCompositorBackground {
 
 impl Default for SkiaCompositorBackground {
     fn default() -> Self {
-        Self::Black
+        Self::Checker
     }
 }
 
@@ -143,7 +144,8 @@ impl ElementImpl for SkiaCompositor {
                     // Support formats supported by Skia and GStreamer on the src side
                     &gst_video::VideoCapsBuilder::new()
                         .format_list(video_format::gst_formats())
-                        .build();
+                        .build(),
+
                 )
                 .unwrap(),
                 gst::PadTemplate::with_gtype(
@@ -280,7 +282,7 @@ impl VideoAggregatorImpl for SkiaCompositor {
                     width: frame.width() as i32,
                     height: frame.height() as i32,
                 },
-                skia::ColorType::RGBA8888,
+                video_format::gst_to_skia(frame.info().format()).unwrap(),
                 skia::AlphaType::Unpremul,
                 None,
             );
