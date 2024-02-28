@@ -54,6 +54,7 @@ members = [
     "video/hsv",
     "video/png",
     "video/rav1e",
+    "video/skia",
     "video/videofx",
     "video/webp",
 ]
@@ -103,6 +104,7 @@ default-members = [
     "video/hsv",
     "video/png",
     "video/rav1e",
+    "video/skia",
 ]
 
 [profile.release]
