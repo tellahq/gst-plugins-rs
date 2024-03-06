@@ -1,6 +1,7 @@
 use std::sync::Mutex;
 
-use gst::{glib, glib::once_cell::sync::Lazy, prelude::*, subclass::prelude::*};
+use once_cell::sync::Lazy;
+use gst::{glib, prelude::*, subclass::prelude::*};
 
 use super::pool::CAT;
 

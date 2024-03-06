@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-use gst::glib::once_cell::sync::Lazy;
+use once_cell::sync::Lazy;
 use gst::glib::Properties;
 use gst::glib::{self, ParamSpec, Value};
 use gst::prelude::*;

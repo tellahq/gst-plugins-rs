@@ -10,10 +10,11 @@ rust-version = "1.66"
 
 [dependencies]
 url = "2"
-gst = { package = "gstreamer", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs" }
-gst-base = { package = "gstreamer-base", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs", features = ["v1_24"] }
-gst-app = { package = "gstreamer-app", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs", features = ["v1_20"] }
+gst.workspace = true
+gst-base = { workspace = true, features = ["v1_24"] }
+gst-app = { workspace = true, features = ["v1_20"] }
 tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread", "time"] }
+once_cell.workspace = true
 
 [lib]
 name = "gstplaybinpool"
