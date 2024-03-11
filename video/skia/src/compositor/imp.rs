@@ -3,7 +3,9 @@ use gst::glib::Properties;
 use gst_base::subclass::prelude::*;
 use gst_video::{prelude::*, subclass::prelude::*};
 use once_cell::sync::Lazy;
+use skia::RRect;
 use std::sync::Mutex;
+use tracing::info;
 
 use super::*;
 
@@ -145,7 +147,6 @@ impl ElementImpl for SkiaCompositor {
                     &gst_video::VideoCapsBuilder::new()
                         .format_list(video_format::gst_formats())
                         .build(),
-
                 )
                 .unwrap(),
                 gst::PadTemplate::with_gtype(
@@ -255,6 +256,7 @@ impl VideoAggregatorImpl for SkiaCompositor {
             skia::AlphaType::Unpremul,
             None,
         );
+
         let mut surface =
             skia::surface::surfaces::wrap_pixels(&out_img_info, &mut mapped_mem, None, None)
                 .ok_or(gst::FlowError::Error)?;
@@ -307,6 +309,8 @@ impl VideoAggregatorImpl for SkiaCompositor {
             let src_rect = skia::Rect::from_wh(frame.width() as f32, frame.height() as f32); // Source rectangle
             let dst_rect =
                 skia::Rect::from_xywh(pad.xpos(), pad.ypos(), desired_width, desired_height);
+            let rounded_dst_rect =
+                RRect::new_rect_xy(dst_rect, pad.border_radius_px(), pad.border_radius_px());
             gst::log!(
                 CAT,
                 imp: self,
@@ -315,12 +319,25 @@ impl VideoAggregatorImpl for SkiaCompositor {
                 src_rect,
                 dst_rect
             );
+
+            canvas.save();
+            canvas.clip_rrect(&rounded_dst_rect, skia::ClipOp::Intersect, pad.anti_alias());
+
+            let now = std::time::Instant::now();
             canvas.draw_image_rect(
                 image,
                 Some((&src_rect, skia::canvas::SrcRectConstraint::Strict)),
                 dst_rect,
                 &paint,
             );
+            info!(
+                "Drew image src rect {:?} to dst rect {:?} in {:.2}ms",
+                src_rect,
+                dst_rect,
+                now.elapsed().as_micros() as f64 / 1000.0
+            );
+
+            canvas.restore();
 
             true
         });

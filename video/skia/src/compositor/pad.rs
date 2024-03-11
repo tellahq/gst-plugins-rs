@@ -14,6 +14,7 @@ pub struct Settings {
     width: f32,
     height: f32,
     anti_alias: bool,
+    border_radius_px: f32,
 }
 
 impl Default for Settings {
@@ -25,6 +26,7 @@ impl Default for Settings {
             width: -1.0,
             height: -1.0,
             anti_alias: true,
+            border_radius_px: 0.0,
         }
     }
 }
@@ -121,6 +123,7 @@ pub struct SkiaCompositorPad {
     #[property(get, set, type = f32, name = "width", nick = "Width", blurb = "Width of the picture", minimum = -1.0, maximum = f32::MAX, member = width, default = -1.0)]
     #[property(get, set, type = f32, name = "height", nick = "Height", blurb = "Height of the picture", minimum = -1.0, maximum = f32::MAX, member = height, default = -1.0)]
     #[property(get, set, type = bool, name = "anti-alias", nick = "Anti-alias", blurb = "Whether to use anti-aliasing", member = anti_alias, default = true)]
+    #[property(get, set, type = f32, name = "border-radius-px", nick = "Border Radius", blurb = "Border radius in pixels", minimum = 0.0, maximum = f32::MAX, member = border_radius_px)]
     pub settings: Mutex<Settings>,
     #[property(
         get,
