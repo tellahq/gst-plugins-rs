@@ -12,7 +12,7 @@ description = "GStreamer skia plugin"
 skia = { package = "skia-safe", version = "0.71" }
 gst.workspace = true
 gst-base.workspace = true
-gst-video = { workspace = true, features = ["v1_16"] }
+gst-video = { workspace = true, features = ["v1_20"] }
 once_cell.workspace = true
 
 [lib]

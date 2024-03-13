@@ -64,6 +64,143 @@ pub struct SkiaCompositor {
 }
 
 impl SkiaCompositor {
+    fn should_draw_background(&self, token: &gst_video::subclass::AggregateFramesToken) -> bool {
+        let obj = self.obj();
+        let info = match obj.video_info() {
+            Some(info) => info,
+            None => return false,
+        };
+
+        let bg_rect = gst_video::VideoRectangle {
+            x: 0,
+            y: 0,
+            w: info.width() as i32,
+            h: info.height() as i32,
+        };
+
+        for pad in obj.sink_pads() {
+            let pad = pad.downcast_ref::<SkiaCompositorPad>().unwrap();
+            if pad.is_inactive() || pad.prepared_frame(token).is_none() {
+                continue;
+            }
+
+            if self.pad_obscures_rectangle(pad, &bg_rect, token) {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn pad_obscures_rectangle(
+        &self,
+        pad: &SkiaCompositorPad,
+        rect: &gst_video::VideoRectangle,
+        token: &gst_video::subclass::AggregateFramesToken,
+    ) -> bool {
+        let mut fill_border = true;
+        let mut border_argb = 0xff000000;
+
+        if !pad.has_current_buffer(token) {
+            return false;
+        }
+
+        if pad.alpha() != 1.0
+            || pad
+                .video_info()
+                .expect("Pad has a buffer, it must have VideoInfo data")
+                .has_alpha()
+        {
+            gst::trace!(CAT, imp: self, "Pad {} has alpha or alpha channel", pad.name());
+            return false;
+        }
+
+        if let Some(config) = pad.property::<Option<gst::Structure>>("converter-config") {
+            border_argb = config.get::<u32>("border-argb").unwrap_or(border_argb);
+            fill_border = config.get::<bool>("fill-border").unwrap_or(fill_border);
+        }
+
+        if !fill_border || (border_argb & 0xff000000) != 0xff000000 {
+            gst::trace!(CAT, imp: self, "Pad {} has border", pad.name());
+            return false;
+        }
+
+        let mut pad_rect = gst_video::VideoRectangle {
+            x: pad.xpos() as i32,
+            y: pad.ypos() as i32,
+            w: 0,
+            h: 0,
+        };
+
+        let out_info = self.obj().video_info().unwrap();
+        let (output_width, output_height) = self.mixer_pad_get_output_size(pad, out_info.par());
+        pad_rect.w = output_width as i32;
+        pad_rect.h = output_height as i32;
+
+        if !self.is_rectangle_contained(rect, pad_rect) {
+            return false;
+        }
+
+        true
+    }
+
+    fn is_rectangle_contained(
+        &self,
+        rect1: &gst_video::VideoRectangle,
+        rect2: gst_video::VideoRectangle,
+    ) -> bool {
+        rect2.x <= rect1.x
+            && rect2.y <= rect1.y
+            && rect2.x + rect2.w >= rect1.x + rect1.w
+            && rect2.y + rect2.h >= rect1.y + rect1.h
+    }
+
+    fn mixer_pad_get_output_size(
+        &self,
+        pad: &SkiaCompositorPad,
+        out_par: gst::Fraction,
+    ) -> (f32, f32) {
+        let mut pad_width;
+        let mut pad_height;
+
+        let obj = self.obj();
+        let video_info = obj.video_info().unwrap();
+        pad_width = if pad.width() <= 0. {
+            video_info.width() as f32
+        } else {
+            pad.width()
+        };
+        pad_height = if pad.height() <= 0. {
+            video_info.height() as f32
+        } else {
+            pad.height()
+        };
+
+        if pad_width == 0. || pad_height == 0. {
+            return (0., 0.);
+        }
+
+        let dar = match gst_video::calculate_display_ratio(
+            pad_width as u32,
+            pad_height as u32,
+            video_info.par(),
+            out_par,
+        ) {
+            None => return (0., 0.),
+            Some(dar) => dar,
+        };
+
+        if pad_height % dar.numer() as f32 == 0. {
+            pad_width = pad_height * dar.numer() as f32 / dar.denom() as f32;
+        } else if pad_width % dar.denom() as f32 == 0. {
+            pad_height = pad_width * dar.denom() as f32 / dar.numer() as f32;
+        } else {
+            pad_width = pad_height * dar.numer() as f32 / dar.denom() as f32;
+        }
+
+        (pad_width, pad_height)
+    }
+
     fn draw_background(&self, canvas: &skia::Canvas, info: &gst_video::VideoInfo) {
         let mut paint = skia::Paint::default();
         match *self.background.lock().unwrap() {
@@ -145,7 +282,6 @@ impl ElementImpl for SkiaCompositor {
                     &gst_video::VideoCapsBuilder::new()
                         .format_list(video_format::gst_formats())
                         .build(),
-
                 )
                 .unwrap(),
                 gst::PadTemplate::with_gtype(
@@ -255,27 +391,49 @@ impl VideoAggregatorImpl for SkiaCompositor {
             skia::AlphaType::Unpremul,
             None,
         );
-        let mut surface =
-            skia::surface::surfaces::wrap_pixels(&out_img_info, &mut mapped_mem, None, None)
-                .ok_or(gst::FlowError::Error)?;
-
-        let canvas = surface.canvas();
-
-        self.draw_background(canvas, &out_info);
-
+        let draw_background = self.should_draw_background(token);
+        let mut pads_to_draw = Vec::with_capacity(obj.num_sink_pads() as usize);
         obj.foreach_sink_pad(|_obj, pad| {
             let pad = pad.downcast_ref::<SkiaCompositorPad>().unwrap();
-
-            let mut paint = skia::Paint::default();
-
-            paint.set_anti_alias(pad.anti_alias());
-            paint.set_blend_mode(pad.operator().into());
-
             let frame = match pad.prepared_frame(token) {
                 Some(frame) => frame,
                 None => return true,
             };
 
+            if pad.alpha() == 0. {
+                return true;
+            }
+
+            if pads_to_draw.is_empty()
+                && !draw_background
+                && out_info.width() == frame.width()
+                && out_info.height() == frame.height()
+                && out_info.format() == frame.info().format()
+            {
+                gst::trace!(CAT, imp: self, "Copying frame directly to output buffer");
+                mapped_mem.copy_from_slice(frame.plane_data(0).unwrap());
+
+                return true;
+            }
+
+            pads_to_draw.push((pad.clone(), frame));
+
+            true
+        });
+
+        let mut surface =
+            skia::surface::surfaces::wrap_pixels(&out_img_info, &mut mapped_mem, None, None)
+                .ok_or(gst::FlowError::Error)?;
+
+        let canvas = surface.canvas();
+        if draw_background {
+            self.draw_background(canvas, &out_info);
+        }
+
+        for (pad, frame) in pads_to_draw {
+            let mut paint = skia::Paint::default();
+            paint.set_anti_alias(pad.anti_alias());
+            paint.set_blend_mode(pad.operator().into());
             paint.set_alpha_f(pad.alpha() as f32);
             let img_info = skia::ImageInfo::new(
                 skia::ISize {
@@ -321,9 +479,8 @@ impl VideoAggregatorImpl for SkiaCompositor {
                 dst_rect,
                 &paint,
             );
-
-            true
-        });
+        }
+        drop(surface);
 
         Ok(gst::FlowSuccess::Ok)
     }
