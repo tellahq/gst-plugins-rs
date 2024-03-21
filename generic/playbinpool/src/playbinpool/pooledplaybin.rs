@@ -101,6 +101,21 @@ impl PooledPlayBin {
                     peer.parent().unwrap().name(), peer.name(),
                     sinkpad.parent().map(|e| e.name()), sinkpad.name());
             }
+
+            let pipeline = self.pipeline();
+            if let Some(parent) = peer.parent() {
+                if parent.parent().as_ref() == Some(pipeline.upcast_ref()) {
+                    let element = parent.downcast::<gst::Element>().unwrap();
+
+                    gst::log!(CAT, imp: self, "Removing {} from {}", element.name(), pipeline.name());
+                    if let Err(e) = element.set_state(gst::State::Null) {
+                        gst::error!(CAT, imp: self, "Could not set {} state to Null: {e:?}", element.name());
+                    }
+                    if let Err(e) = pipeline.remove(element.downcast_ref::<gst::Element>().unwrap()) {
+                        gst::error!(CAT, imp: self, "Could not remove {} from pipeline: {e:?}", element.name());
+                    }
+                }
+            }
         }
     }
 
@@ -132,11 +147,13 @@ impl PooledPlayBin {
 
             videorate.sync_state_with_parent().unwrap();
 
-            if let Err(err) = pad.link(&videorate.static_pad("sink").unwrap()) {
+            let videorate_sinkpad = videorate.static_pad("sink").unwrap();
+            if let Err(err) = pad.link(&videorate_sinkpad) {
                 gst::error!(CAT, imp: self, "Failed to link pads: {:?}", err);
             }
 
-            if let Err(err) = videorate.static_pad("src").unwrap().link(&sinkpad) {
+            let pad = videorate.static_pad("src").unwrap();
+            if let Err(err) = pad.link(&sinkpad) {
                 gst::error!(CAT, imp: self, "Failed to link pads: {:?}", err);
             }
 
