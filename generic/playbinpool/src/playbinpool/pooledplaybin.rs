@@ -96,7 +96,7 @@ impl PooledPlayBin {
         gst::debug!(CAT, imp: self, "Pad added: {:?}", pad);
         let sinkpad = self.sink.static_pad("sink").unwrap();
         if sinkpad.is_linked() {
-            gst::error!(CAT, imp: self, "Pad already linked");
+            gst::error!(CAT, imp: self, "Pad already linked to {:?}", sinkpad.peer());
             return;
         }
 
