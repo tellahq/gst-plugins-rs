@@ -100,6 +100,27 @@ impl PooledPlayBin {
             return;
         }
 
+        if self.stream_type() == gst::StreamType::VIDEO {
+            let videorate = gst::ElementFactory::make("videorate").build().unwrap();
+
+            if let Err(err) = self.pipeline().add(&videorate) {
+                gst::error!(CAT, imp: self, "Failed to add videorate: {:?}", err);
+                return;
+            }
+
+            videorate.sync_state_with_parent().unwrap();
+
+            if let Err(err) = pad.link(&videorate.static_pad("sink").unwrap()) {
+                gst::error!(CAT, imp: self, "Failed to link pads: {:?}", err);
+            }
+
+            if let Err(err) = videorate.static_pad("src").unwrap().link(&sinkpad) {
+                gst::error!(CAT, imp: self, "Failed to link pads: {:?}", err);
+            }
+
+            return;
+        }
+
         if let Err(err) = pad.link(&sinkpad) {
             gst::error!(CAT, imp: self, "Failed to link pads: {:?}", err);
         }

@@ -5,12 +5,12 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-use once_cell::sync::Lazy;
 use gst::glib::Properties;
 use gst::glib::{self, ParamSpec, Value};
 use gst::prelude::*;
 use gst::subclass::prelude::*;
 use gst_base::{prelude::*, subclass::prelude::*};
+use once_cell::sync::Lazy;
 
 use super::{pool, PooledPlayBin};
 
