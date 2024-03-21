@@ -92,11 +92,33 @@ impl PartialEq for PooledPlayBin {
 }
 
 impl PooledPlayBin {
+    fn pad_removed(&self, _pad: &gst::Pad) {
+        let sinkpad = self.sink.static_pad("sink").unwrap();
+
+        if let Some(peer) = sinkpad.peer() {
+            if let Err(err) = peer.unlink(&sinkpad) {
+                gst::error!(CAT, imp: self, "Could not unlink {}:{} from {:?}:{}: {err:?}",
+                    peer.parent().unwrap().name(), peer.name(),
+                    sinkpad.parent().map(|e| e.name()), sinkpad.name());
+            }
+        }
+    }
+
     fn pad_added(&self, pad: &gst::Pad) {
         gst::debug!(CAT, imp: self, "Pad added: {:?}", pad);
         let sinkpad = self.sink.static_pad("sink").unwrap();
         if sinkpad.is_linked() {
-            gst::error!(CAT, imp: self, "Pad already linked to {:?}", sinkpad.peer());
+            let peer = sinkpad.peer().unwrap();
+
+            let pipeline = self.pipeline();
+            pipeline.debug_to_dot_file_with_ts(gst::DebugGraphDetails::all(), format!("{}-already-linked-pad", pipeline.name()));
+
+            gst::error!(CAT, imp: self, "Got pad {}:{} while {}:{} already linked to {}:{}",
+                pad.parent().unwrap().name(),
+                pad.name(),
+                sinkpad.parent().unwrap().name(),
+                sinkpad.name(),
+                peer.parent().unwrap().name(), peer.name());
             return;
         }
 
@@ -335,6 +357,10 @@ impl ObjectImpl for PooledPlayBin {
         self.uridecodebin
             .connect_pad_added(glib::clone!(@weak self as this => move |_, pad| {
                     this.pad_added(pad);
+            }));
+        self.uridecodebin
+            .connect_pad_removed(glib::clone!(@weak self as this => move |_, pad| {
+                    this.pad_removed(pad);
             }));
     }
 }
