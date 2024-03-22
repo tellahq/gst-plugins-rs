@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use std::sync::{Condvar, Mutex, MutexGuard};
 use once_cell::sync::Lazy;
+use std::sync::{Condvar, Mutex, MutexGuard};
 
 use gst::{
     glib::{self, Properties},

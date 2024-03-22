@@ -2,7 +2,6 @@
 
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use gst::glib::Properties;
@@ -83,6 +82,8 @@ impl Default for PlaybinPoolSrc {
     }
 }
 
+static START_TIME: Lazy<gst::ClockTime> = Lazy::new(|| gst::get_timestamp());
+
 static DUMPDOT_DIR: Lazy<Option<Box<PathBuf>>> = Lazy::new(|| {
     if let Ok(dotdir) = std::env::var("GST_DEBUG_DUMP_DOT_DIR") {
         let path = Path::new(&dotdir);
@@ -104,8 +105,6 @@ static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
 
 impl PlaybinPoolSrc {
     fn dot_pipeline(&self) -> Option<String> {
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-
         if DUMPDOT_DIR.is_none() {
             return None;
         }
@@ -121,10 +120,11 @@ impl PlaybinPoolSrc {
         let pipeline = playbin.pipeline();
         let fname = format!(
             "{}-{}-{}.dot",
-            COUNTER.fetch_add(1, Ordering::SeqCst),
+            gst::get_timestamp() - *START_TIME,
             self.obj().name(),
             pipeline.name()
         );
+
         let dot_file = DUMPDOT_DIR.as_ref().unwrap().join(&fname);
         let mut file = std::fs::File::create(dot_file)
             .map_err(|e| {
@@ -491,6 +491,7 @@ impl ObjectImpl for PlaybinPoolSrc {
     }
 
     fn constructed(&self) {
+        let _ = START_TIME.as_ref();
         self.parent_constructed();
         self.obj().set_format(gst::Format::Time);
         self.obj().set_async(true);

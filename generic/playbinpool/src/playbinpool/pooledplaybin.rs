@@ -1,7 +1,10 @@
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicU32, Ordering},
+    Mutex,
+};
 
-use once_cell::sync::Lazy;
 use gst::{glib, prelude::*, subclass::prelude::*};
+use once_cell::sync::Lazy;
 
 use super::pool::CAT;
 
@@ -29,7 +32,16 @@ pub struct PooledPlayBin {
 
 impl Default for PooledPlayBin {
     fn default() -> Self {
-        let pipeline = gst::Pipeline::new();
+        static N_PIPELINES: AtomicU32 = AtomicU32::new(0);
+        let pipeline = gst::ElementFactory::make("pipeline")
+            .name(&format!(
+                "pooledpipeline-{}",
+                N_PIPELINES.fetch_add(1, Ordering::SeqCst)
+            ))
+            .build()
+            .unwrap()
+            .downcast::<gst::Pipeline>()
+            .unwrap();
 
         let uridecodebin = gst::ElementFactory::make("uridecodebin3")
             .property("instant-uri", true)
