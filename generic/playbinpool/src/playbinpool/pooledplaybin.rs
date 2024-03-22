@@ -123,7 +123,8 @@ impl PooledPlayBin {
                     if let Err(e) = element.set_state(gst::State::Null) {
                         gst::error!(CAT, imp: self, "Could not set {} state to Null: {e:?}", element.name());
                     }
-                    if let Err(e) = pipeline.remove(element.downcast_ref::<gst::Element>().unwrap()) {
+                    if let Err(e) = pipeline.remove(element.downcast_ref::<gst::Element>().unwrap())
+                    {
                         gst::error!(CAT, imp: self, "Could not remove {} from pipeline: {e:?}", element.name());
                     }
                 }
@@ -138,7 +139,10 @@ impl PooledPlayBin {
             let peer = sinkpad.peer().unwrap();
 
             let pipeline = self.pipeline();
-            pipeline.debug_to_dot_file_with_ts(gst::DebugGraphDetails::all(), format!("{}-already-linked-pad", pipeline.name()));
+            pipeline.debug_to_dot_file_with_ts(
+                gst::DebugGraphDetails::all(),
+                format!("{}-already-linked-pad", pipeline.name()),
+            );
 
             gst::error!(CAT, imp: self, "Got pad {}:{} while {}:{} already linked to {}:{}",
                 pad.parent().unwrap().name(),
