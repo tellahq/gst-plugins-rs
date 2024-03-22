@@ -154,8 +154,11 @@ impl PooledPlayBin {
         }
 
         if self.stream_type() == gst::StreamType::VIDEO {
-            let videorate = gst::ElementFactory::make("videorate").build().unwrap();
-
+            let videorate = gst::parse::bin_from_description(
+                "videorate ! capsfilter caps=\"video/x-raw,framerate=30/1\"",
+                true,
+            )
+            .unwrap();
             if let Err(err) = self.pipeline().add(&videorate) {
                 gst::error!(CAT, imp: self, "Failed to add videorate: {:?}", err);
                 return;
