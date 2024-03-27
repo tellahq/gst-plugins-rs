@@ -13,6 +13,7 @@ gst.workspace = true
 anyhow = "1"
 regex = "1"
 once_cell.workspace = true
+dirs = "5.0.1"
 
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.3"
