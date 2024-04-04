@@ -126,6 +126,22 @@ impl DecoderPipeline {
                     peer.parent().unwrap().name(), peer.name(),
                     sinkpad.parent().map(|e| e.name()), sinkpad.name());
             }
+
+            let pipeline = self.pipeline();
+            if let Some(parent) = peer.parent() {
+                if parent.parent().as_ref() == Some(pipeline.upcast_ref()) {
+                    let element = parent.downcast::<gst::Element>().unwrap();
+
+                    gst::log!(CAT, imp: self, "Removing {} from {}", element.name(), pipeline.name());
+                    if let Err(e) = element.set_state(gst::State::Null) {
+                        gst::error!(CAT, imp: self, "Could not set {} state to Null: {e:?}", element.name());
+                    }
+                    if let Err(e) = pipeline.remove(element.downcast_ref::<gst::Element>().unwrap())
+                    {
+                        gst::error!(CAT, imp: self, "Could not remove {} from pipeline: {e:?}", element.name());
+                    }
+                }
+            }
         }
     }
 
@@ -150,25 +166,44 @@ impl DecoderPipeline {
             return;
         }
 
+        if self.stream_type() == gst::StreamType::VIDEO {
+            let videorate = gst::parse::bin_from_description(
+                "videorate ! capsfilter caps=\"video/x-raw,framerate=30/1\"",
+                true,
+            )
+            .unwrap();
+            if let Err(err) = self.pipeline().add(&videorate) {
+                gst::error!(CAT, imp: self, "Failed to add videorate: {:?}", err);
+                return;
+            }
+
+            videorate.sync_state_with_parent().unwrap();
+
+            let videorate_sinkpad = videorate.static_pad("sink").unwrap();
+            if let Err(err) = pad.link(&videorate_sinkpad) {
+                gst::error!(CAT, imp: self, "Failed to link pads: {:?}", err);
+            }
+
+            let pad = videorate.static_pad("src").unwrap();
+            if let Err(err) = pad.link(&sinkpad) {
+                gst::error!(CAT, imp: self, "Failed to link pads: {:?}", err);
+            }
+
+            return;
+        }
+
         if let Err(err) = pad.link(&sinkpad) {
             if self.state.lock().unwrap().bus_message_sigid.is_none() {
                 gst::debug!(CAT, imp: self, "Pad added but no stream selected anymore");
 
                 return;
             }
-
-            gst::error!(
-                CAT,
-                imp: self,
-                "Failed link pads {:?}:{:?}: {:#?}\n -> {:?}:{}: {:#?} \n: {:?}",
-                pad.parent().map(|p| p.name()),
-                pad.name(),
+            gst::error!(CAT, imp: self, "Failed link pads {:?}:{:?}: {:#?}\n -> {:?}:{}: {:#?} \n: {:?}",
+                pad.parent().map(|p| p.name()), pad.name(),
                 pad.query_caps(None),
-                sinkpad.parent().map(|p| p.name()),
-                sinkpad.name(),
+                sinkpad.parent().map(|p| p.name()), sinkpad.name(),
                 sinkpad.query_caps(None),
-                err
-            );
+                err);
         }
     }
 
@@ -373,6 +408,13 @@ impl DecoderPipeline {
                         gst::warning!(CAT, imp: self, "Could not post message {message:?}: {e:?}");
                     }
                 }
+            }
+            gst::MessageView::Error(s) => {
+                gst::error!(CAT, imp: self, "Got error message: {s}");
+                self.pipeline().debug_to_dot_file_with_ts(
+                    gst::DebugGraphDetails::all(),
+                    format!("error-{}", self.name),
+                );
             }
             gst::MessageView::StateChanged(s) => {
                 if s.src()
