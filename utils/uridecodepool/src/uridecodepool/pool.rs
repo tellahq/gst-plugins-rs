@@ -234,12 +234,14 @@ impl PlaybinPool {
         gst::debug!(CAT, "Getting pipeline for {:?}", src.name());
         let mut state = self.state.lock().unwrap();
 
-        let decoderpipe = if let Some(position) = state
+        if let Some(position) = state
             .prepared_pipelines
             .iter()
             .position(|p| p.imp().target_src().as_ref() == Some(src))
         {
             let pipe = state.prepared_pipelines.remove(position);
+            state.running_pipelines.push(pipe.clone());
+            drop(state);
 
             self.obj()
                 .emit_by_name::<()>("prepared-pipeline-removed", &[&src]);
@@ -255,12 +257,12 @@ impl PlaybinPool {
 
             pipe
         } else {
-            self.get_unused_or_create_pipeline(src, &mut state)
-        };
+            let decoderpipe = self.get_unused_or_create_pipeline(src, &mut state);
 
-        state.running_pipelines.push(decoderpipe.clone());
+            state.running_pipelines.push(decoderpipe.clone());
 
-        decoderpipe
+            decoderpipe
+        }
     }
 
     fn get_unused_or_create_pipeline<'lt>(
