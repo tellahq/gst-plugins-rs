@@ -359,15 +359,6 @@ impl AggregatorImpl for SkiaCompositor {
 }
 
 impl VideoAggregatorImpl for SkiaCompositor {
-    fn find_best_format(
-        &self,
-        downstream_caps: &gst::Caps,
-    ) -> Option<(gst_video::VideoInfo, bool)> {
-        gst::info!(CAT, imp: self, "Downstream caps: {}", downstream_caps);
-
-        None
-    }
-
     // Called whenever a new output frame should be produced. At this point, each pad has
     // either no frame queued up at all or the frame that should be used for this output
     // time.
