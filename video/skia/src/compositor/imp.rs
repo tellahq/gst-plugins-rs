@@ -3,6 +3,7 @@ use gst::glib::Properties;
 use gst_base::subclass::prelude::*;
 use gst_video::{prelude::*, subclass::prelude::*};
 use std::sync::{LazyLock, Mutex};
+use tracing::*;
 
 use super::*;
 
@@ -355,6 +356,7 @@ impl AggregatorImpl for SkiaCompositor {
 }
 
 impl VideoAggregatorImpl for SkiaCompositor {
+    #[instrument(skip(self, token, outbuf))]
     fn aggregate_frames(
         &self,
         token: &gst_video::subclass::AggregateFramesToken,
