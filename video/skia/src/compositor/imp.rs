@@ -4,6 +4,7 @@ use gst_base::subclass::prelude::*;
 use gst_video::{prelude::*, subclass::prelude::*};
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
+use tracing::*;
 
 use super::*;
 
@@ -362,6 +363,7 @@ impl VideoAggregatorImpl for SkiaCompositor {
     // Called whenever a new output frame should be produced. At this point, each pad has
     // either no frame queued up at all or the frame that should be used for this output
     // time.
+    #[instrument(skip(self, token, outbuf))]
     fn aggregate_frames(
         &self,
         token: &gst_video::subclass::AggregateFramesToken,
