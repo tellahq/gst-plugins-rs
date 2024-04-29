@@ -60,7 +60,7 @@ static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
 
 static START_TIME: Lazy<gst::ClockTime> = Lazy::new(|| gst::get_timestamp());
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Copy, Clone)]
 struct ElementPtr(std::ptr::NonNull<gst::ffi::GstElement>);
 
 unsafe impl Send for ElementPtr {}
@@ -89,7 +89,8 @@ pub enum CleanupMode {
     )]
     Initial,
     #[enum_value(
-        name = "CleanupAutomatic: cleanup .dot files before each snapshots",
+        name = "CleanupAutomatic: cleanup .dot files before each snapshots if pipeline-snapshot::use_folders is false
+                otherwise cleanup .dot files in folders",
         nick = "automatic"
     )]
     Automatic,
@@ -104,6 +105,7 @@ struct Settings {
     dot_pipeline_ptr: bool,
     dot_dir: Option<String>,
     cleanup_mode: CleanupMode,
+    use_folders: bool,
 }
 
 impl Default for Settings {
@@ -114,9 +116,11 @@ impl Default for Settings {
             dot_ts: true,
             cleanup_mode: CleanupMode::None,
             dot_pipeline_ptr: false,
+            use_folders: false,
         }
     }
 }
+
 impl Settings {
     fn set_dot_dir(&mut self, dot_dir: Option<String>) {
         if let Some(dot_dir) = dot_dir {
@@ -176,6 +180,12 @@ impl Settings {
     }
 }
 
+#[derive(Debug, Default)]
+struct State {
+    current_folder: u32,
+    pipelines: HashMap<ElementPtr, glib::WeakRef<gst::Element>>,
+}
+
 #[derive(Properties, Debug, Default)]
 #[properties(wrapper_type = super::PipelineSnapshot)]
 pub struct PipelineSnapshot {
@@ -184,9 +194,10 @@ pub struct PipelineSnapshot {
     #[property(name="dot-ts", get, set, type = bool, member = dot_ts, blurb = "Add timestamp to dot files")]
     #[property(name="dot-pipeline-ptr", get, set, type = bool, member = dot_pipeline_ptr, blurb = "Add pipeline ptr value to dot files")]
     #[property(name="cleanup-mode", get  = |s: &Self| s.settings.read().unwrap().cleanup_mode, set, type = CleanupMode, member = cleanup_mode, blurb = "Cleanup mode", builder(CleanupMode::None))]
+    #[property(name="use-folders", get, set, type = bool, member = use_folders, blurb = "Use folders to store dot files, each time `.snapshot()` is called a new folder is created")]
     settings: RwLock<Settings>,
-    pipelines: Arc<Mutex<HashMap<ElementPtr, glib::WeakRef<gst::Element>>>>,
     handles: Mutex<Option<Handles>>,
+    state: Arc<Mutex<State>>,
 }
 
 #[derive(Debug)]
@@ -216,7 +227,7 @@ impl ObjectImpl for PipelineSnapshot {
 
         if settings.cleanup_mode == CleanupMode::Initial {
             drop(settings);
-            self.cleanup_dots();
+            self.cleanup_dots(&self.settings.read().unwrap().dot_dir.as_ref());
         }
 
         self.register_hook(TracerHook::ElementNew);
@@ -257,18 +268,21 @@ impl GstObjectImpl for PipelineSnapshot {}
 impl TracerImpl for PipelineSnapshot {
     fn element_new(&self, _ts: u64, element: &gst::Element) {
         if element.is::<gst::Pipeline>() {
-            gst::debug!(CAT, imp: self, "new pipeline: {}", element.name());
+            let pipeline_ptr = ElementPtr::from_ref(element);
 
             let weak = element.downgrade();
-            let mut pipelines = self.pipelines.lock().unwrap();
-            pipelines.insert(ElementPtr::from_ref(element), weak);
+            let mut state = self.state.lock().unwrap();
+            state.pipelines.insert(pipeline_ptr, weak);
+            gst::debug!(CAT, imp: self, "new pipeline: {} ({:?}) got {} now", element.name(), pipeline_ptr, state.pipelines.len());
         }
     }
 
     fn object_destroyed(&self, _ts: u64, object: std::ptr::NonNull<gst::ffi::GstObject>) {
-        let mut pipelines = self.pipelines.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
         let object = ElementPtr::from_object_ptr(object);
-        pipelines.remove(&object);
+        if state.pipelines.remove(&object).is_some() {
+            gst::debug!(CAT, imp: self, "Pipeline removed: {:?} - {} remaining", object, state.pipelines.len());
+        }
     }
 }
 
@@ -279,30 +293,58 @@ impl PipelineSnapshot {
     }
 
     pub(crate) fn snapshot(&self) {
-        let pipelines = {
-            let weaks = self.pipelines.lock().unwrap();
-            weaks
-                .values()
-                .filter_map(|w| w.upgrade())
-                .collect::<Vec<_>>()
-        };
-
         let settings = self.settings.read().unwrap();
+
         let dot_dir = if let Some(dot_dir) = settings.dot_dir.as_ref() {
-            dot_dir
+            if settings.use_folders {
+                let dot_dir = format!("{}/{}", dot_dir, {
+                    let mut state = self.state.lock().unwrap();
+                    let res = state.current_folder;
+                    state.current_folder += 1;
+
+                    res
+                });
+
+                if let Err(err) = std::fs::create_dir_all(&dot_dir) {
+                    gst::warning!(CAT, imp: self, "Failed to create folder {}: {}", dot_dir, err);
+                    return;
+                }
+
+                dot_dir
+            } else {
+                dot_dir.clone()
+            }
         } else {
             gst::info!(CAT, imp: self, "No dot-dir set, not dumping pipelines");
             return;
         };
 
         if matches!(settings.cleanup_mode, CleanupMode::Automatic) {
-            self.cleanup_dots();
+            self.cleanup_dots(&Some(&dot_dir));
         }
 
         let ts = if settings.dot_ts {
             format!("{:?}-", gst::get_timestamp() - *START_TIME)
         } else {
             "".to_string()
+        };
+
+        let pipelines = {
+            let state = self.state.lock().unwrap();
+            gst::log!(CAT, imp: self, "dumping {} pipelines", state.pipelines.len());
+
+            state
+                .pipelines
+                .iter()
+                .filter_map(|(ptr, w)| {
+                    let pipeline = w.upgrade();
+
+                    if pipeline.is_none() {
+                        gst::warning!(CAT, imp: self, "Pipeline {ptr:?} disappeared");
+                    }
+                    pipeline
+                })
+                .collect::<Vec<_>>()
         };
 
         for pipeline in pipelines.into_iter() {
@@ -374,9 +416,8 @@ impl PipelineSnapshot {
         anyhow::bail!("only supported on UNIX system");
     }
 
-    fn cleanup_dots(&self) {
-        let settings = self.settings.read().unwrap();
-        if let Some(dot_dir) = settings.dot_dir.as_ref() {
+    fn cleanup_dots(&self, dot_dir: &Option<&String>) {
+        if let Some(dot_dir) = dot_dir {
             gst::info!(CAT, imp: self, "Cleaning up {}", dot_dir);
             let entries = match std::fs::read_dir(dot_dir) {
                 Ok(entries) => entries,
