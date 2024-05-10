@@ -3,7 +3,6 @@
 use futures::prelude::*;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, Once};
 
 use gst::glib;
