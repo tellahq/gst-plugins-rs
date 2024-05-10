@@ -40,6 +40,7 @@
  */
 use std::collections::HashMap;
 use std::io::Write;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -80,7 +81,7 @@ impl ElementPtr {
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Clone, Copy, glib::Enum)]
 #[repr(u32)]
-#[enum_type(name = "GstpipelineSnapshotCleanupMode")]
+#[enum_type(name = "GstPipelineSnapshotCleanupMode")]
 #[non_exhaustive]
 pub enum CleanupMode {
     #[enum_value(
@@ -89,13 +90,34 @@ pub enum CleanupMode {
     )]
     Initial,
     #[enum_value(
-        name = "CleanupAutomatic: cleanup .dot files before each snapshots if pipeline-snapshot::use_folders is false
-                otherwise cleanup .dot files in folders",
+        name = "CleanupAutomatic: cleanup .dot files before each snapshots if pipeline-snapshot::folder-mode is not None \
+                otherwise cleanup `.dot` files in folders",
         nick = "automatic"
     )]
     Automatic,
     #[enum_value(name = "None: Never remove any dot file", nick = "none")]
     None,
+}
+
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Clone, Copy, glib::Enum)]
+#[repr(u32)]
+#[enum_type(name = "GstPipelineSnapshotFolderMode")]
+#[non_exhaustive]
+pub enum FolderMode {
+    #[enum_value(name = "None: Do not use folders to store dot files", nick = "none")]
+    None,
+    #[enum_value(
+        name = "Numbered: Use folders to store dot files, each time `.snapshot()` is called a new folder is created \
+                and named with a number starting from 0.",
+        nick = "numbered"
+    )]
+    Numbered,
+    #[enum_value(
+        name = "Timed: Use folders to store dot files, each time `.snapshot()` is called a new folder is created \
+                         and named with the current timestamp.",
+        nick = "timed"
+    )]
+    Timed,
 }
 
 #[derive(Debug)]
@@ -105,7 +127,7 @@ struct Settings {
     dot_pipeline_ptr: bool,
     dot_dir: Option<String>,
     cleanup_mode: CleanupMode,
-    use_folders: bool,
+    folder_mode: FolderMode,
 }
 
 impl Default for Settings {
@@ -116,7 +138,7 @@ impl Default for Settings {
             dot_ts: true,
             cleanup_mode: CleanupMode::None,
             dot_pipeline_ptr: false,
-            use_folders: false,
+            folder_mode: FolderMode::None,
         }
     }
 }
@@ -165,9 +187,8 @@ impl Settings {
             self.dot_pipeline_ptr = dot_pipeline_ptr;
         }
 
-        if let Ok(cleanup_mod) = s.get::<String>("cleanup-mode") {
-            gst::log!(CAT, imp: imp, "cleanup-mode = {:?}", cleanup_mod);
-            self.cleanup_mode = match cleanup_mod.as_str() {
+        if let Ok(cleanup_mod) = s.get::<&str>("cleanup-mode") {
+            self.cleanup_mode = match cleanup_mod {
                 "initial" => CleanupMode::Initial,
                 "automatic" => CleanupMode::Automatic,
                 "none" => CleanupMode::None,
@@ -176,6 +197,18 @@ impl Settings {
                     CleanupMode::None
                 }
             };
+        }
+
+        if let Ok(folder_mode) = s.get::<&str>("folder-mode") {
+            self.folder_mode = match folder_mode {
+                "none" => FolderMode::None,
+                "numbered" => FolderMode::Numbered,
+                "timed" => FolderMode::Timed,
+                _ => {
+                    gst::warning!(CAT, imp: imp, "unknown folder-mode: {}", folder_mode);
+                    FolderMode::None
+                }
+            }
         }
     }
 }
@@ -194,7 +227,10 @@ pub struct PipelineSnapshot {
     #[property(name="dot-ts", get, set, type = bool, member = dot_ts, blurb = "Add timestamp to dot files")]
     #[property(name="dot-pipeline-ptr", get, set, type = bool, member = dot_pipeline_ptr, blurb = "Add pipeline ptr value to dot files")]
     #[property(name="cleanup-mode", get  = |s: &Self| s.settings.read().unwrap().cleanup_mode, set, type = CleanupMode, member = cleanup_mode, blurb = "Cleanup mode", builder(CleanupMode::None))]
-    #[property(name="use-folders", get, set, type = bool, member = use_folders, blurb = "Use folders to store dot files, each time `.snapshot()` is called a new folder is created")]
+    #[property(name="folder-mode",
+               get=|s: &Self| s.settings.read().unwrap().folder_mode,
+               set,
+               type = FolderMode, member = folder_mode, blurb = "How to create folder each time a snapshot of all pipelines is made", builder(FolderMode::None))]
     settings: RwLock<Settings>,
     handles: Mutex<Option<Handles>>,
     state: Arc<Mutex<State>>,
@@ -227,7 +263,7 @@ impl ObjectImpl for PipelineSnapshot {
 
         if settings.cleanup_mode == CleanupMode::Initial {
             drop(settings);
-            self.cleanup_dots(&self.settings.read().unwrap().dot_dir.as_ref());
+            self.cleanup_dots(&self.settings.read().unwrap().dot_dir.as_ref(), true);
         }
 
         self.register_hook(TracerHook::ElementNew);
@@ -296,14 +332,21 @@ impl PipelineSnapshot {
         let settings = self.settings.read().unwrap();
 
         let dot_dir = if let Some(dot_dir) = settings.dot_dir.as_ref() {
-            if settings.use_folders {
-                let dot_dir = format!("{}/{}", dot_dir, {
-                    let mut state = self.state.lock().unwrap();
-                    let res = state.current_folder;
-                    state.current_folder += 1;
+            if !matches!(settings.folder_mode, FolderMode::None) {
+                let dot_dir = match settings.folder_mode {
+                    FolderMode::Numbered => {
+                        let mut state = self.state.lock().unwrap();
+                        let res = state.current_folder;
+                        state.current_folder += 1;
 
-                    res
-                });
+                        format!("{dot_dir}/{res}")
+                    }
+                    FolderMode::Timed => {
+                        let datetime: chrono::DateTime<chrono::Local> = chrono::Local::now();
+                        format!("{dot_dir}/{}", datetime.format("%Y-%m-%d %H:%M:%S"))
+                    }
+                    _ => unreachable!(),
+                };
 
                 if let Err(err) = std::fs::create_dir_all(&dot_dir) {
                     gst::warning!(CAT, imp: self, "Failed to create folder {}: {}", dot_dir, err);
@@ -320,7 +363,7 @@ impl PipelineSnapshot {
         };
 
         if matches!(settings.cleanup_mode, CleanupMode::Automatic) {
-            self.cleanup_dots(&Some(&dot_dir));
+            self.cleanup_dots(&Some(&dot_dir), false);
         }
 
         let ts = if settings.dot_ts {
@@ -416,31 +459,51 @@ impl PipelineSnapshot {
         anyhow::bail!("only supported on UNIX system");
     }
 
-    fn cleanup_dots(&self, dot_dir: &Option<&String>) {
+    fn cleanup_dots(&self, dot_dir: &Option<&String>, recurse: bool) {
         if let Some(dot_dir) = dot_dir {
             gst::info!(CAT, imp: self, "Cleaning up {}", dot_dir);
-            let entries = match std::fs::read_dir(dot_dir) {
-                Ok(entries) => entries,
+            let mut paths = match std::fs::read_dir(dot_dir) {
+                Ok(entries) => {
+                    entries
+                        .filter_map(|entry| {
+                            let entry = entry.ok()?; // Handle possible errors when reading directory entries
+                            let path = entry.path();
+                            let extension = path.extension()?.to_str()?; // Get the extension as a string
+                            if extension.ends_with(".dot") {
+                                Some(path.to_path_buf())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<PathBuf>>()
+                }
                 Err(e) => {
                     gst::warning!(CAT, imp: self, "Failed to read {}: {}", dot_dir, e);
                     return;
                 }
             };
 
-            for entry in entries {
-                let entry = match entry {
-                    Ok(e) => e,
-                    Err(e) => {
-                        gst::warning!(CAT, imp: self, "Failed to read entry: {}", e);
-                        continue;
-                    }
-                };
+            if recurse {
+                paths.append(
+                    &mut walkdir::WalkDir::new(dot_dir)
+                        .into_iter()
+                        .filter_map(|entry| {
+                            let entry = entry.ok()?;
+                            let path = entry.path();
+                            let extension = path.extension()?.to_str()?;
+                            if extension == "dot" {
+                                Some(path.to_path_buf())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<PathBuf>>(),
+                )
+            }
 
-                let path = entry.path();
-                if path.extension().map_or(false, |e| e == "dot") {
-                    if let Err(e) = std::fs::remove_file(&path) {
-                        gst::warning!(CAT, imp: self, "Failed to remove {}: {}", path.display(), e);
-                    }
+            for path in paths {
+                if let Err(e) = std::fs::remove_file(&path) {
+                    gst::warning!(CAT, imp: self, "Failed to remove {}: {}", path.display(), e);
                 }
             }
         }
