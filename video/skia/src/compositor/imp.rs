@@ -395,6 +395,7 @@ impl VideoAggregatorImpl for SkiaCompositor {
         );
         let draw_background = self.should_draw_background(token);
         let mut pads_to_draw = Vec::with_capacity(obj.num_sink_pads() as usize);
+        let mut drawn_background = false;
         obj.foreach_sink_pad(|_obj, pad| {
             let pad = pad.downcast_ref::<SkiaCompositorPad>().unwrap();
             let frame = match pad.prepared_frame(token) {
@@ -408,12 +409,14 @@ impl VideoAggregatorImpl for SkiaCompositor {
 
             if pads_to_draw.is_empty()
                 && !draw_background
+                && !drawn_background
                 && out_info.width() == frame.width()
                 && out_info.height() == frame.height()
                 && out_info.format() == frame.info().format()
             {
                 gst::trace!(CAT, imp: self, "Copying frame directly to output buffer");
                 mapped_mem.copy_from_slice(frame.plane_data(0).unwrap());
+                drawn_background = true;
 
                 return true;
             }
