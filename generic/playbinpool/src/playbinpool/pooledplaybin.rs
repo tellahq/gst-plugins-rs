@@ -155,7 +155,7 @@ impl PooledPlayBin {
 
         if self.stream_type() == gst::StreamType::VIDEO {
             let videorate = gst::parse::bin_from_description(
-                "videorate ! capsfilter caps=\"video/x-raw,framerate=30/1\"",
+                "videorate drop-only=true ! capsfilter caps=\"video/x-raw,framerate=30/1\"",
                 true,
             )
             .unwrap();
