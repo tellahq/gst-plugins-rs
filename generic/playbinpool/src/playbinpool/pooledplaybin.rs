@@ -321,7 +321,7 @@ impl PooledPlayBin {
     }
 
     pub(crate) fn play(&self) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
-        let _ = self.state_lock.lock();
+        let _lock = self.state_lock.lock();
         self.pipeline.set_state(gst::State::Playing)
     }
 
@@ -373,7 +373,7 @@ impl PooledPlayBin {
         self.pipeline.call_async(move |pipeline| {
             let this = obj.imp();
 
-            let _ = this.state_lock.lock();
+            let _unused = this.state_lock.lock();
             if let Err(err) = pipeline.set_state(gst::State::Null) {
                 gst::error!(CAT, obj: pipeline, "Could not teardown pipeline {err:?}");
             }
