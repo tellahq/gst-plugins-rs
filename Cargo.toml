@@ -41,6 +41,7 @@ members = [
     "utils/fallbackswitch",
     "utils/livesync",
     "utils/togglerecord",
+    "utils/segmentclipper",
     "utils/tracers",
     "utils/uridecodepool",
     "utils/uriplaylistbin",
