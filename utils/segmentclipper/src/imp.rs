@@ -16,8 +16,8 @@
  *
  * When receiving an EOS event, it will push the last buffer it received if no buffer inside
  * the segment was received. This is useful in combination with the
- * #GstVideoDecoder:drop-out-of-segment property, this element can be
- * used to handlle special cases where the input stream has big gaps (in screen recording for example)
+ * #GstVideoDecoder:drop-out-of-segment property, as it allow handling special cases
+ * where the input stream has big gaps (in screen recording for example)
  * and seeking might lead to EOS without any buffer inside the segment, while what use would
  * expect is to have the frame before the gap to be displayed.
  *
@@ -96,33 +96,47 @@ impl BaseTransformImpl for SegmentClipper {
             Ok(gst_base::BASE_TRANSFORM_FLOW_DROPPED)
         };
 
+        // This logic follows the implementation of gst::Segment::clip
+        // Buffer has a duration != 0 and its stop is right at the beginning of the segment
+        let buffer_ends_at_start_of_segment =
+            segment.start().is_some() && start != stop && stop == segment.start().unwrap();
+        // Segment has a duratrion != 0 and the buffer starts at the end of the segment
+        let buffer_starts_at_end_of_segment = segment.stop().is_some()
+            && segment.start() != segment.stop()
+            && start == segment.stop().unwrap();
+
         if segment.rate() > 0.0 {
             // Forward playback
             if stop
                 < segment
                     .start()
                     .expect("Can't have a NONE segment.start in forward playback")
+                || buffer_ends_at_start_of_segment
             {
                 return drop_buffer(&mut state);
-            } else if segment.stop().is_some() && Some(start) >= segment.stop() {
+            } else if segment.stop().is_some() && Some(start) >= segment.stop()
+                || buffer_starts_at_end_of_segment
+            {
                 gst::debug!(CAT, imp: self, "Buffer reached end of segment {segment:?}");
                 return Err(gst::FlowError::Eos);
             }
         } else {
             // Reverse playback
-            if stop
-                <= segment
-                    .start()
-                    .expect("Can't have a NONE segment.start in reverse playback")
-            {
-                gst::debug!(CAT, imp: self, "Buffer reached end of segment");
-                return Err(gst::FlowError::Eos);
-            } else if start
+            if start
                 > segment
                     .stop()
                     .expect("Can't have a NONE segment.stop in reverse playback")
+                || buffer_starts_at_end_of_segment
             {
                 return drop_buffer(&mut state);
+            } else if stop
+                <= segment
+                    .start()
+                    .expect("Can't have a NONE segment.start in reverse playback")
+                || buffer_starts_at_end_of_segment
+            {
+                gst::debug!(CAT, imp: self, "Buffer reached end of segment");
+                return Err(gst::FlowError::Eos);
             }
         }
 
@@ -157,10 +171,11 @@ impl BaseTransformImpl for SegmentClipper {
             });
 
         state.last_dropped_buffer = None;
-        let (pts, end) = state
-            .segment
-            .clip(start, stop)
-            .expect("Manually checked in submit_input_buffer");
+        let (pts, end) = if let Some((pts, end)) = state.segment.clip(start, stop) {
+            (pts, end)
+        } else {
+            unreachable!("Buffer {buffer:?} outside of segment {:?}", state.segment);
+        };
         let buffer_mut = buffer.make_mut();
         if let Some(pts) = pts {
             buffer_mut.set_pts(pts);
