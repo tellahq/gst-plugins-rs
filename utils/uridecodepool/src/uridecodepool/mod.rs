@@ -4,9 +4,10 @@ use gst::glib;
 use gst::prelude::*;
 use gst::subclass::prelude::*;
 
+mod decoderpipeline;
 mod imp;
 mod pool;
-mod decoderpipeline;
+mod seek_handler;
 
 glib::wrapper! {
     pub struct UriDecodePoolSrc(ObjectSubclass<imp::UriDecodePoolSrc>)
@@ -45,6 +46,10 @@ impl DecoderPipeline {
         self.imp().pipeline()
     }
 
+    pub(crate) fn seek_handler(&self) -> &seek_handler::SeekHandler {
+        &self.imp().seek_handler
+    }
+
     pub(crate) fn reset(&self, uri: &str, caps: &gst::Caps, stream_id: Option<&str>) {
         self.imp().reset(uri, caps, stream_id);
     }
@@ -62,8 +67,12 @@ impl DecoderPipeline {
         caps: &gst::Caps,
         stream_id: Option<&str>,
         pool: &PlaybinPool,
+        initial_seek: Option<gst::Event>,
     ) -> DecoderPipeline {
-        let this: DecoderPipeline = glib::Object::builder().property("pool", pool).build();
+        let this: DecoderPipeline = glib::Object::builder()
+            .property("pool", pool)
+            .property("initial-seek", initial_seek)
+            .build();
 
         this.reset(uri, caps, stream_id);
 
