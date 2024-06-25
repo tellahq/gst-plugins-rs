@@ -1,7 +1,6 @@
 set-globals,
-    media_dir="$(test_dir)/../../media",
+    media_dir="/Users/thiblahute/devel/clients/sequence/cloud-project-system/gstreamer/subprojects/gst-integration-testsuites/medias/",
     blue="file://$(media_dir)/defaults//matroska/timed_frames_video_only_1fps.mkv"
-
 
 meta,
     handles-states=true,
