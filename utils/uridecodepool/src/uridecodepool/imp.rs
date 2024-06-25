@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
+use crate::uridecodepool::seek_handler::SeekInfo;
 use futures::prelude::*;
+use gst::glib::translate::ToGlibPtr;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, Once};
@@ -22,6 +24,10 @@ struct Settings {
     uri: Option<String>,
     caps: gst::Caps,
     stream_id: Option<String>,
+
+    inpoint: Option<gst::ClockTime>,
+    duration: Option<gst::ClockTime>,
+    reverse: bool,
 }
 
 impl Default for Settings {
@@ -32,6 +38,9 @@ impl Default for Settings {
                 .structure_with_any_features(gst::Structure::new_empty("video/x-raw"))
                 .build(),
             stream_id: None,
+            inpoint: None,
+            duration: None,
+            reverse: false,
         }
     }
 }
@@ -42,13 +51,18 @@ struct State {
     bus_message_sigid: Option<glib::SignalHandlerId>,
     source_setup_sigid: Option<glib::SignalHandlerId>,
 
-    segment: Option<gst::Segment>,
+    current_segment: Option<gst::FormattedSegment<gst::ClockTime>>,
+
+    // Seek event being processed
     seek_event: Option<gst::Event>,
+    // Seek to be processed as soon as underlying pipeline is ready
+    pending_seek: Option<gst::Event>,
     flushing: bool,
     seek_seqnum: Option<gst::Seqnum>,
     segment_seqnum: Option<gst::Seqnum>,
     needs_segment: bool,
     seek_segment: Option<gst::Segment>,
+    ignore_seek: bool,
 }
 
 #[derive(Properties, Debug)]
@@ -62,6 +76,9 @@ pub struct UriDecodePoolSrc {
         flags = glib::ParamFlags::READWRITE | gst::PARAM_FLAG_MUTABLE_READY,
         blurb = "The stream-id of the stream to be used"
     )]
+    #[property(name="inpoint", get, set, type = Option<gst::ClockTime>, member = inpoint, blurb = "The inpoint to seek to")]
+    #[property(name="duration", get, set, type = Option<gst::ClockTime>, member = duration, blurb = "The duration to play")]
+    #[property(name="reverse", get, set, type = bool, member = reverse, blurb = "Play in reverse direction")]
     settings: Mutex<Settings>,
 
     /// This is a hack to be able to generate a dot file of the underlying pipeline
@@ -75,6 +92,7 @@ pub struct UriDecodePoolSrc {
     state: Mutex<State>,
     start_completed: Mutex<bool>,
 
+    #[property(name="pool", get, type = super::PlaybinPool, blurb = "The pool used")]
     pool: super::PlaybinPool,
 }
 
@@ -89,7 +107,7 @@ impl Default for UriDecodePoolSrc {
     }
 }
 
-static START_TIME: Lazy<gst::ClockTime> = Lazy::new(|| gst::get_timestamp());
+static START_TIME: Lazy<gst::ClockTime> = Lazy::new(gst::get_timestamp);
 
 static DUMPDOT_DIR: Lazy<Option<Box<PathBuf>>> = Lazy::new(|| {
     if let Ok(dotdir) = std::env::var("GST_DEBUG_DUMP_DOT_DIR") {
@@ -102,7 +120,7 @@ static DUMPDOT_DIR: Lazy<Option<Box<PathBuf>>> = Lazy::new(|| {
     None
 });
 
-static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
+pub(crate) static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
     gst::DebugCategory::new(
         "uridecodepoolsrc",
         gst::DebugColorFlags::empty(),
@@ -159,6 +177,14 @@ impl futures::stream::FusedStream for CustomBusStream {
 }
 
 impl UriDecodePoolSrc {
+    pub(crate) fn send_seek(&self, seek: gst::Event) {
+        gst::debug!(CAT, imp: self, "Sending seek event {:?}", seek);
+
+        self.state.lock().unwrap().ignore_seek = true;
+        self.obj().send_event(seek);
+        self.state.lock().unwrap().ignore_seek = false;
+    }
+
     fn dot_pipeline(&self) -> Option<String> {
         if DUMPDOT_DIR.is_none() {
             return None;
@@ -203,6 +229,32 @@ impl UriDecodePoolSrc {
         Some(fname)
     }
 
+    pub(crate) fn initial_seek_event(&self) -> Option<gst::Event> {
+        let settings = self.settings.lock().unwrap();
+
+        if let Some(inpoint) = settings.inpoint {
+            gst::debug!(CAT, imp: self, "inpoint: {:?} - duration: {:?}", inpoint, settings.duration);
+            let stop = if let Some(duration) = settings.duration {
+                Some(inpoint + duration)
+            } else {
+                gst::ClockTime::NONE
+            };
+
+            let seek = gst::event::Seek::new(
+                if settings.reverse { -1.0 } else { 1.0 },
+                gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE,
+                gst::SeekType::Set,
+                inpoint,
+                gst::SeekType::Set,
+                stop,
+            );
+
+            Some(seek)
+        } else {
+            None
+        }
+    }
+
     fn handle_bus_messages(&self, bus: gst::Bus, decoderpipe: &DecoderPipeline) {
         let obj = self.obj().clone();
         let mut bus_stream = CustomBusStream::new(&bus);
@@ -234,17 +286,16 @@ impl UriDecodePoolSrc {
                             && s.pending() == gst::State::VoidPending
                         {
                             *start_completed = true;
+                            gst::info!(CAT, obj: obj, "Calling start_complete");
                             obj.start_complete(gst::FlowReturn::Ok);
                         }
                     }
                     gst::MessageView::Error(s) => {
-                        obj.imp().decoderpipe().map(|p| {
-                            p.pipeline().debug_to_dot_file_with_ts(
+                        if let Some(p) = obj.imp().decoderpipe() { p.pipeline().debug_to_dot_file_with_ts(
                                 gst::DebugGraphDetails::all(),
                                 format!("{}-error", obj.name()),
-                            )
-                        });
-                        gst::error!(CAT, obj: obj, "Got error message: {s} from {decoderpipe:?}");
+                            ) }
+                        gst::error!(CAT, obj: obj, "Got error message: {s} from {decoderpipe:?} (uri: {:?})", this.settings.lock().unwrap().uri);
                         if let Err(e) = obj.post_message(s.message().to_owned()) {
                             gst::error!(CAT, "Could not post error message: {e:?}");
                         }
@@ -253,6 +304,40 @@ impl UriDecodePoolSrc {
                 }
             }
         });
+    }
+
+    // Avoid sending the seek to the baseclass until we have called `start_complete()` as
+    // seeking in the baseclass starts the srcpad tasks, and then we can end up calling `start_complete`,
+    // which needs the STREAM_LOCK, while it is taken by the streaming thread.
+    //
+    // Returns `true`` if the event should be postponed or `false` if it should be sent to the base
+    // class
+    fn handle_seek_event(&self, event: &gst::Event) -> bool {
+        let start_completed = self.start_completed.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
+        state.seek_event = Some(event.clone());
+
+        if !*start_completed {
+            // Ensure that the right seek will be used when the pipeline reaches
+            // playing state
+            if let Some(p) = state.decoderpipe.as_ref() {
+                p.imp().seek(event.clone());
+            }
+
+            gst::info!(CAT, imp: self, "Waiting for start to complete before sending seek");
+            // And force the base class to handle the seek for us when we call `start_complete`
+            unsafe {
+                let obj = self.obj();
+                let _obj_lock = obj.object_lock();
+                let base_src: *mut gst_base::ffi::GstBaseSrc =
+                    obj.upcast_ref::<gst_base::BaseSrc>().to_glib_none().0;
+                (*base_src).pending_seek = event.to_glib_full();
+            }
+
+            true
+        } else {
+            false
+        }
     }
 
     /// Ensures that a `stream-start` event with the right ID has been received
@@ -270,7 +355,7 @@ impl UriDecodePoolSrc {
         decoderpipe
             .sink()
             .sink_pads()
-            .get(0)
+            .first()
             .unwrap()
             .stream_id()
             .map_or(false, |id| {
@@ -293,6 +378,7 @@ impl UriDecodePoolSrc {
         &self,
         event_type: Option<gst::EventType>,
     ) -> Result<gst::MiniObject, gst::FlowError> {
+        gst::log!(CAT, imp: self, "Processing objects: {event_type:?}");
         assert!(
             event_type.is_none()
                 || event_type == Some(gst::EventType::Caps)
@@ -308,7 +394,7 @@ impl UriDecodePoolSrc {
             .unwrap()
             .clone();
         let sink = decoderpipe.sink();
-        let sink_sinkpad = decoderpipe.sink().sink_pads().get(0).unwrap().clone();
+        let sink_sinkpad = decoderpipe.sink().sink_pads().first().unwrap().clone();
 
         let return_func =
             |this: &Self, obj: gst::MiniObject| -> Result<gst::MiniObject, gst::FlowError> {
@@ -348,18 +434,20 @@ impl UriDecodePoolSrc {
             }
 
             let is_eos = sink.is_eos();
-            let obj = match sink.try_pull_object(gst::ClockTime::from_mseconds(100)) {
-                Some(obj) => {
-                    gst::log!(CAT, imp: self, "Got object: {:?}", obj);
-                    Ok(obj)
-                }
+            // Avoid blocking forever if for some reason the underlying pipeline is stuck, allowing
+            // the element to be flushed/stopped
+            let obj = match sink.try_pull_object(gst::ClockTime::from_seconds(10)) {
+                Some(obj) => Ok(obj),
                 None => {
-                    // Handle the case where the sink changed it EOS state
+                    // Handle the case where the sink changed its EOS state
                     // between the pull and now
                     if is_eos || sink.is_eos() {
                         let mut state = self.state.lock().unwrap();
                         if state.seek_seqnum.is_some() {
-                            gst::debug!(CAT, imp: self, "Got EOS while waiting for FLUSH_STOP");
+                            gst::info!(CAT, imp: self, "Got EOS while waiting for FLUSH_STOP");
+                            // Assert if we have been waiting for flush for more than 10s
+                            // to avoid infinite loop
+                            std::thread::sleep(std::time::Duration::from_secs(2));
                             continue;
                         }
 
@@ -367,8 +455,7 @@ impl UriDecodePoolSrc {
                             gst::debug!(CAT, imp: self, "Needs segment!");
                             let segment =
                                 sink
-                                    .sink_pads()
-                                    .get(0)
+                                    .sink_pads().first()
                                     .unwrap()
                                     .sticky_event::<gst::event::Segment>(0)
                                     .map_or_else(|| {
@@ -386,8 +473,18 @@ impl UriDecodePoolSrc {
                                     });
 
                             if let Some(segment) = segment {
-                                // Ensure we push the right segment
-                                state.segment = Some(segment.clone());
+                                match segment.downcast_ref::<gst::format::Time>() {
+                                    Some(segment) => state.current_segment = Some(segment.clone()),
+                                    None => {
+                                        gst::element_imp_error!(
+                                            self,
+                                            gst::StreamError::Failed,
+                                            ["uridecodepoolsrc can only handle time segments"]
+                                        );
+
+                                        return Err(gst::FlowError::Error);
+                                    }
+                                }
 
                                 drop(state);
 
@@ -415,12 +512,13 @@ impl UriDecodePoolSrc {
                 gst::log!(CAT, imp: self, "Got event: {:?}", event);
                 match event.view() {
                     gst::EventView::Tag(_) => {
-                        gst::log!(CAT, imp: self, "Got tag event, forwarding");
+                        gst::debug!(CAT, imp: self, "Got tag event, forwarding");
 
                         self.obj().src_pad().push_event(event.to_owned());
                         None
                     }
-                    gst::EventView::FlushStop(_) => {
+                    gst::EventView::FlushStop(f) => {
+                        gst::debug!(CAT, imp: self, "Got FLUSH_STOP {f:?}");
                         let mut state = self.state.lock().unwrap();
                         if let Some(seq) = state.seek_seqnum.as_ref() {
                             if &event.seqnum() == seq {
@@ -431,8 +529,10 @@ impl UriDecodePoolSrc {
                                 );
                                 let _ = state.seek_seqnum.take();
                             } else {
-                                gst::info!(CAT, imp: self, "Got FLUSH_STOP with wrong seqnum");
+                                gst::info!(CAT, imp: self, "Got FLUSH_STOP with seqnum {:?} while expecting {:?}", event.seqnum(), seq);
                             }
+                        } else {
+                            gst::info!(CAT, imp: self, "Got FLUSH_STOP without a seek seqnum, ignoring");
                         }
 
                         continue;
@@ -450,27 +550,12 @@ impl UriDecodePoolSrc {
 
             if let Some(event) = event {
                 if let gst::EventView::Caps(c) = event.view() {
-                    gst::log!(CAT, imp: self, "Got caps: {:?}", c.caps());
+                    gst::debug!(CAT, imp: self, "Got caps: {:?}", c.caps());
                     if matches!(event_type, Some(gst::EventType::Caps)) {
                         return return_func(self, c.caps().to_owned().upcast());
                     } else {
                         gst::debug!(CAT, imp: self, "Pushing new caps downstream");
-                        self.obj()
-                            .upcast_ref::<gst_base::BaseSrc>()
-                            .set_caps(&c.caps().to_owned())
-                            .map_err(|e| {
-                                if self
-                                    .obj()
-                                    .src_pad()
-                                    .pad_flags()
-                                    .contains(gst::PadFlags::FLUSHING)
-                                {
-                                    gst::FlowError::Flushing
-                                } else {
-                                    gst::error!(CAT, "Could not set caps: {e:?}");
-                                    gst::FlowError::NotNegotiated
-                                }
-                            })?;
+                        self.set_caps(c.caps().to_owned())?;
                     }
                 }
             } else if obj.type_().is_a(gst::Sample::static_type()) {
@@ -478,7 +563,7 @@ impl UriDecodePoolSrc {
                     gst::debug!(
                         CAT,
                         imp: self,
-                        "Got sample while waiting for caps, dropping"
+                        "Got sample while waiting for {event_type:?}, dropping"
                     );
                     continue;
                 }
@@ -506,6 +591,7 @@ impl UriDecodePoolSrc {
 
         let obj = self.obj();
         let mut state = self.state.lock().unwrap();
+        decoderpipe.seek_handler().start();
         state.source_setup_sigid = Some(decoderpipe.uridecodebin().connect_closure(
             "source-setup",
             false,
@@ -520,8 +606,142 @@ impl UriDecodePoolSrc {
         state.decoderpipe = Some(decoderpipe.clone());
     }
 
+    fn get_appsink_caps(&self) -> Option<gst::Caps> {
+        let decoderpipe = self.decoderpipe().unwrap();
+        let sink = decoderpipe.sink();
+        let sink_pad = sink.static_pad("sink").unwrap();
+        sink_pad
+            .sticky_event::<gst::event::Caps>(0)
+            .map(|caps| caps.caps_owned())
+    }
+
     fn decoderpipe(&self) -> Option<DecoderPipeline> {
         self.state.lock().unwrap().decoderpipe.clone()
+    }
+
+    fn stream_start_probe(
+        &self,
+        probe_info: &mut gst::PadProbeInfo,
+        stream_start: &gst::event::StreamStart,
+    ) -> gst::PadProbeReturn {
+        if self.state.lock().unwrap().seek_seqnum.is_some() {
+            gst::info!(CAT, imp: self, "Dropping stream-start while waiting flushing seek to be executed");
+
+            return gst::PadProbeReturn::Drop;
+        }
+
+        let decoderpipe = self.decoderpipe().unwrap();
+        let stream = if let Some(stream) = decoderpipe.stream() {
+            stream
+        } else {
+            gst::info!(CAT, imp: self, "StreamStart event without stream");
+            return gst::PadProbeReturn::Ok;
+        };
+
+        let stream_id = stream.stream_id().unwrap();
+        gst::debug!(CAT, imp: self, "{:?} Got stream: {:?} {}", decoderpipe, stream.stream_type(), stream_id);
+
+        let settings = self.settings.lock().unwrap();
+        let mut event_builder = gst::event::StreamStart::builder(
+                                settings.stream_id.as_ref().map_or_else(|| stream_id.as_str(), |id| {
+                                    let pipeline = decoderpipe.pipeline();
+                                    if id.as_str() != stream_id.as_str() {
+                                        pipeline.debug_to_dot_file_with_ts(
+                                            gst::DebugGraphDetails::all(),
+                                            format!("{}-wrong-stream-id", self.obj().name())
+                                        );
+                                        gst::info!(CAT, imp: self, "Selected wrong stream ID {}, {} could probably not be found \
+                                            FAKING selected stream ID", stream_id, id)
+                                    }
+
+                                    id.as_str()
+                                })
+                            )
+                            .flags(stream.stream_flags())
+                            .stream(stream);
+
+        if let Some(group_id) = stream_start.group_id() {
+            event_builder = event_builder.group_id(group_id);
+        }
+
+        probe_info.data = Some(gst::PadProbeData::Event(event_builder.build()));
+
+        gst::PadProbeReturn::Ok
+    }
+
+    fn segment_probe(
+        &self,
+        probe_info: &mut gst::PadProbeInfo,
+        new_segment: &gst::event::Segment,
+    ) -> gst::PadProbeReturn {
+        let mut state = self.state.lock().unwrap();
+        if state.seek_seqnum.is_some() {
+            gst::info!(CAT, imp: self, "Dropping segment while waiting flushing seek to be executed");
+
+            return gst::PadProbeReturn::Drop;
+        }
+
+        gst::debug!(CAT, imp: self, "Got segment {new_segment:#?}");
+        if let Some(segment) = state.current_segment.clone() {
+            let mut builder = gst::event::Segment::builder(&segment)
+                .running_time_offset(new_segment.running_time_offset())
+                .seqnum(new_segment.seqnum());
+
+            if let Some(seqnum) = state.segment_seqnum.as_ref() {
+                builder = builder.seqnum(*seqnum);
+                gst::error!(CAT, imp: self, "Setting segment seqnum: {seqnum:?}");
+            }
+
+            state.needs_segment = false;
+            probe_info.data = Some(gst::PadProbeData::Event(builder.build()));
+
+            gst::PadProbeReturn::Ok
+        } else {
+            gst::debug!(CAT, imp: self, "Trying to push a segment before we received one, dropping it.");
+
+            gst::PadProbeReturn::Drop
+        }
+    }
+
+    fn eos_probe(
+        &self,
+        probe_info: &mut gst::PadProbeInfo,
+        eos: &gst::event::Eos,
+    ) -> gst::PadProbeReturn {
+        let state = self.state.lock().unwrap();
+
+        gst::debug!(CAT, imp: self, "Got {eos:?}");
+        if let Some(seqnum) = state.segment_seqnum.as_ref() {
+            if eos.seqnum() != *seqnum {
+                let mut builder = gst::event::Eos::builder()
+                    .running_time_offset(eos.running_time_offset())
+                    .seqnum(eos.seqnum());
+                builder = builder.seqnum(*seqnum);
+                gst::warning!(CAT, imp: self, "Forcing {seqnum:?} on EOS as previous one was wrong ({:#?})", eos);
+                probe_info.data = Some(gst::PadProbeData::Event(builder.build()));
+            }
+        }
+
+        gst::PadProbeReturn::Ok
+    }
+
+    fn set_caps(&self, caps: gst::Caps) -> Result<(), gst::FlowError> {
+        self.obj()
+            .upcast_ref::<gst_base::BaseSrc>()
+            .set_caps(&caps)
+            .map_err(|e| {
+                if self
+                    .obj()
+                    .src_pad()
+                    .pad_flags()
+                    .contains(gst::PadFlags::FLUSHING)
+                {
+                    gst::FlowError::Flushing
+                } else {
+                    gst::error!(CAT, "Could not set caps: {e:?}");
+                    gst::FlowError::NotNegotiated
+                }
+            })
     }
 }
 
@@ -568,75 +788,31 @@ impl ObjectImpl for UriDecodePoolSrc {
         self.obj().set_async(true);
         self.obj().set_automatic_eos(false);
 
-        self.obj().src_pad().add_probe(gst::PadProbeType::EVENT_DOWNSTREAM,
+        self.obj().src_pad().add_probe(gst::PadProbeType::EVENT_DOWNSTREAM | gst::PadProbeType::EVENT_FLUSH | gst::PadProbeType::QUERY_DOWNSTREAM,
             glib::clone!(@weak self as this => @default-return gst::PadProbeReturn::Ok, move |_, probe_info| {
                 let event = match &probe_info.data {
-                    Some(gst::PadProbeData::Event(event)) => event,
+                    Some(gst::PadProbeData::Event(event)) => event.clone(),
+                    Some(gst::PadProbeData::Query(q)) => {
+                        if let gst::QueryView::Allocation(_) = q.view() {
+                            return gst::PadProbeReturn::Drop;
+                        }
+
+                        return gst::PadProbeReturn::Ok
+                    }
                     _ => unreachable!(),
                 };
 
                 match event.view() {
-                    gst::EventView::StreamStart(s) => {
-                        let decoderpipe = this.state.lock().unwrap().decoderpipe.as_ref().unwrap().clone();
-                        let stream = if let Some (stream) = decoderpipe.stream() {
-                            stream
-                        } else {
-                            gst::info!(CAT, imp: this, "StreamStart event without stream");
-                            return gst::PadProbeReturn::Ok;
-                        };
-
-                        let stream_id = stream.stream_id().unwrap();
-                        gst::debug!(CAT, imp: this, "{:?} ++++> Got stream: {:?} {}", decoderpipe, stream.stream_type(), stream_id);
-
-                        let settings = this.settings.lock().unwrap();
-                        let mut event_builder = gst::event::StreamStart::builder(
-                                settings.stream_id.as_ref().map_or_else(|| stream_id.as_str(), |id| {
-                                    let pipeline = decoderpipe.pipeline();
-                                    if id.as_str() != stream_id.as_str() {
-                                        pipeline.debug_to_dot_file_with_ts(gst::DebugGraphDetails::all(), format!("{}-wrong-stream-id", this.obj().name()));
-                                        gst::info!(CAT, imp: this, "Selected wrong stream ID {}, {} could probably not be found \
-                                            FAKING selected stream ID", stream_id, id)
-                                    }
-
-                                    id.as_str()
-                                })
-                            )
-                            .flags(stream.stream_flags())
-                            .stream(stream);
-
-                        if let Some(group_id) = s.group_id() {
-                            event_builder = event_builder.group_id(group_id);
-                        }
-
-                        probe_info.data = Some(gst::PadProbeData::Event(event_builder.build()));
-                    },
-                    gst::EventView::Segment(s) => {
-                        gst::log!(CAT, imp: this, "Got segment {s:?}");
-                        let mut state = this.state.lock().unwrap();
-
-                        let segment = state.segment.clone();
-                        if let Some(segment) = segment {
-                            let mut builder = gst::event::Segment::builder(&segment)
-                                .running_time_offset(event.running_time_offset())
-                                .seqnum(event.seqnum());
-
-
-                            if let Some(seqnum) = state.segment_seqnum.as_ref() {
-                                builder = builder.seqnum(*seqnum);
-                            }
-
-                            state.needs_segment = false;
-                            probe_info.data = Some(gst::PadProbeData::Event(builder.build()));
-                        } else {
-                            gst::debug!(CAT, imp: this, "Trying to push a segment before we received one, dropping it.");
-                            return gst::PadProbeReturn::Drop
-                        };
-
-                    },
-                    _ => (),
+                    gst::EventView::FlushStart(_) | gst::EventView::FlushStop(_) => {
+                        gst::error!(CAT, imp: this, "Got flush {event:?}");
+                        return gst::PadProbeReturn::Ok
+                    }
+                    gst::EventView::StreamStart(s) => this.stream_start_probe(probe_info, s),
+                    gst::EventView::Segment(s) => this.segment_probe(probe_info, s),
+                    gst::EventView::Eos(eos) => this.eos_probe(probe_info, eos),
+                    _ => gst::PadProbeReturn::Ok
                 }
 
-                gst::PadProbeReturn::Ok
             }));
     }
 }
@@ -644,12 +820,33 @@ impl ObjectImpl for UriDecodePoolSrc {
 impl GstObjectImpl for UriDecodePoolSrc {}
 
 impl ElementImpl for UriDecodePoolSrc {
+    fn change_state(
+        &self,
+        transition: gst::StateChange,
+    ) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
+        if transition == gst::StateChange::PausedToReady {
+            // Reset the seek_handler to ensure that we do not end up waiting for a seek while
+            // tearing down. We can't do it in `.unlock` although it would make sense
+            // it is also called on FLUSH_START which is received when seeking (and detinifitely do
+            // not want to reset the seek handler in that case)
+            if let Some(p) = self.decoderpipe() {
+                p.seek_handler().stop(&self.obj())
+            }
+        }
+
+        self.parent_change_state(transition)
+    }
+
     fn send_event(&self, event: gst::Event) -> bool {
         gst::log!(CAT, imp: self, "Got event {event:?}");
         if let gst::EventView::Seek(s) = event.view() {
             gst::info!(CAT, imp: self, "Seeking {s:?}");
 
-            self.state.lock().unwrap().seek_event = Some(event.clone());
+            // Avoid base class to handle seek event when it has been started
+            // but the underlying pipeline is not ready yet.
+            if self.handle_seek_event(&event) {
+                return true;
+            }
         }
 
         self.parent_send_event(event)
@@ -697,16 +894,16 @@ impl BaseSrcImpl for UriDecodePoolSrc {
         true
     }
 
-    fn unlock_stop(&self) -> Result<(), gst::ErrorMessage> {
-        gst::debug!(CAT, imp: self, "Stop flushing!");
-        self.state.lock().unwrap().flushing = false;
+    fn unlock(&self) -> Result<(), gst::ErrorMessage> {
+        gst::debug!(CAT, imp: self, "Start flushing!");
+        self.state.lock().unwrap().flushing = true;
 
         Ok(())
     }
 
-    fn unlock(&self) -> Result<(), gst::ErrorMessage> {
-        gst::debug!(CAT, imp: self, "START flushing!");
-        self.state.lock().unwrap().flushing = true;
+    fn unlock_stop(&self) -> Result<(), gst::ErrorMessage> {
+        gst::debug!(CAT, imp: self, "Stop flushing!");
+        self.state.lock().unwrap().flushing = false;
 
         Ok(())
     }
@@ -716,24 +913,31 @@ impl BaseSrcImpl for UriDecodePoolSrc {
         let seek_event = if let Some(seek_event) = state.seek_event.take() {
             seek_event
         } else {
-            gst::debug!(CAT, imp: self, "Ignoring initial seek");
+            gst::info!(CAT, imp: self, "Ignoring initial seek");
 
             return true;
         };
+
+        gst::debug!(CAT, imp: self, "Seeking with saved {seek_event:?}");
         let decoderpipe = state.decoderpipe.clone();
         drop(state);
 
         if let Some(decoderpipe) = decoderpipe {
-            gst::info!(CAT, imp: self, "Seeking to {segment:?}");
             if let gst::EventView::Seek(s) = seek_event.view() {
                 let values = s.get();
                 if values.1.contains(gst::SeekFlags::FLUSH) {
-                    gst::debug!(CAT, imp: self, "Flushing seek... waiting for flush-stop with right seqnum ({:?}) restarting pushing buffers", seek_event.seqnum());
                     let mut state = self.state.lock().unwrap();
-                    state.seek_seqnum = Some(seek_event.seqnum());
                     state.segment_seqnum = Some(seek_event.seqnum());
                     state.needs_segment = true;
                     state.seek_segment = Some(segment.clone());
+
+                    if state.ignore_seek {
+                        gst::error!(CAT, imp: self, "Handling seek ourself, not forwarding to underlying pipeline");
+                        return true;
+                    }
+                    state.seek_seqnum = Some(seek_event.seqnum());
+
+                    gst::info!(CAT, imp: self, "Flushing seek... waiting for flush-stop with right seqnum ({:?}) before restarting pushing buffers", seek_event.seqnum());
                 }
 
                 values
@@ -780,14 +984,22 @@ impl BaseSrcImpl for UriDecodePoolSrc {
         })?;
         if res == gst::StateChangeSuccess::Success {
             gst::debug!(CAT, imp: self, "Already ready");
-            *start_completed = true;
-            self.obj().start_complete(gst::FlowReturn::Ok);
+            if !*start_completed {
+                self.obj().start_complete(gst::FlowReturn::Ok);
+                *start_completed = true;
+                drop(start_completed);
+
+                if let Some(pending_seek) = self.state.lock().unwrap().pending_seek.take() {
+                    gst::info!(CAT, imp: self, "Sending pending seek {pending_seek:?} after start complete");
+                    self.send_event(pending_seek);
+                }
+            }
         } else {
             let settings = self.settings.lock().unwrap();
             gst::debug!(
                 CAT,
                 imp: self,
-                "{:?} - {:?} Waiting {} state to be reached after {res:?}",
+                "{:?} - {:?} Waiting {} state PLAYING to be reached after {res:?}",
                 settings.stream_id,
                 settings.caps,
                 decoderpipe.imp().name()
@@ -798,17 +1010,26 @@ impl BaseSrcImpl for UriDecodePoolSrc {
     }
 
     fn negotiate(&self) -> Result<(), gst::LoggableError> {
+        if self
+            .decoderpipe()
+            .map_or(false, |p| p.seek_handler().get_eos_sample().is_some())
+        {
+            // When inside `nlecomposition`, keeping playing a new segment after stack change
+            // we need to use the caps from the sample that triggered the fake EOS, so we
+            // have to wait for it
+            gst::info!(CAT, imp: self, "Changing stack, waiting for previous sample before renegotiating");
+
+            return Ok(());
+        }
+
         gst::info!(CAT, imp: self, "Caps changed, renegotiating");
 
         let caps = match self.process_objects(Some(gst::EventType::Caps)) {
             Ok(caps) => caps.downcast::<gst::Caps>().unwrap(),
             Err(e) => {
                 if e == gst::FlowError::Eos {
-                    let decoderpipe = self.decoderpipe().unwrap();
-                    let sink = decoderpipe.sink();
-                    let sink_pad = sink.static_pad("sink").unwrap();
-                    if let Some(caps) = sink_pad.sticky_event::<gst::event::Caps>(0) {
-                        caps.caps_owned()
+                    if let Some(caps) = self.get_appsink_caps() {
+                        caps
                     } else {
                         gst::info!(CAT, imp: self, "No sticky caps event on sink. Faking success.");
                         return Ok(());
@@ -823,17 +1044,28 @@ impl BaseSrcImpl for UriDecodePoolSrc {
         };
 
         gst::debug!(CAT, imp: self, "Negotiated caps: {:?}", caps);
-        self.obj()
-            .upcast_ref::<gst_base::BaseSrc>()
-            .set_caps(&caps)
-            .map_err(|_| gst::loggable_error!(CAT, "Failed to negotiate caps",))
+
+        self.set_caps(caps)
+            .map_err(|e| gst::loggable_error!(CAT, "Failed to set caps: {e:?}"))
     }
 
     fn event(&self, event: &gst::Event) -> bool {
-        if let gst::EventView::Seek(_s) = event.view() {
-            gst::debug!(CAT, imp: self, "Seeking");
+        if let gst::EventView::Seek(seek) = event.view() {
+            if self
+                .decoderpipe()
+                .map_or(false, |p| p.seek_handler().handle_seek(&self.obj(), seek))
+            {
+                gst::error!(CAT, "Seek handled");
+                return true;
+            }
 
-            self.state.lock().unwrap().seek_event = Some(event.clone())
+            // Avoid base class to handle seek event when it has been started
+            // but the underlying pipeline is not ready yet.
+            if self.handle_seek_event(event) {
+                return true;
+            }
+
+            gst::debug!(CAT, imp: self, "Forwarding seek to base class {:?}", self.obj().src_pad().mode());
         }
 
         self.parent_event(event)
@@ -845,31 +1077,80 @@ impl BaseSrcImpl for UriDecodePoolSrc {
         _buffer: Option<&mut gst::BufferRef>,
         _length: u32,
     ) -> Result<gst_base::subclass::base_src::CreateSuccess, gst::FlowError> {
-        let sample = self
-            .process_objects(None)?
-            .downcast::<gst::Sample>()
-            .expect("Should always have a sample when not waiting for EOS");
+        let pipeline = self.decoderpipe().unwrap();
 
-        if let Some(segment) = sample.segment() {
+        gst::log!(CAT, imp: self, "create with underlying pipeline state: {:?}", pipeline.pipeline().state(gst::ClockTime::ZERO));
+
+        // If we are inside nlecomposition, we need to use the sample that triggered the fake EOS
+        // and set the caps from it.
+        let (sample, caps_to_set) = if let Some(sample) = pipeline.seek_handler().get_eos_sample() {
+            if let Some(caps) = sample
+                .caps()
+                .map_or_else(|| self.get_appsink_caps(), |caps| Some(caps.to_owned()))
+            {
+                gst::info!(CAT, imp: self, "EOS sample: {sample:?} --> Forcing caps");
+                (sample, Some(caps))
+            } else {
+                gst::error!(CAT, imp: self, "EOS sample: {sample:?} --> can't find any caps after EOS sample, not-negotiated");
+                return Err(gst::FlowError::NotNegotiated);
+            }
+        } else {
+            (
+                self.process_objects(None)?
+                    .downcast::<gst::Sample>()
+                    .expect("Should always have a sample when not waiting for EOS"),
+                None,
+            )
+        };
+
+        let segment = match pipeline.seek_handler().process(&self.obj(), &sample)? {
+            SeekInfo::SeekSegment(seqnum, segment) => {
+                gst::debug!(CAT, imp: self, "Got seek segment after process --> new seqnum: {seqnum:?} -- {:?}",  self.state.lock().unwrap().seek_seqnum);
+                self.state.lock().unwrap().segment_seqnum = Some(seqnum);
+
+                Some(segment)
+            }
+            SeekInfo::None => {
+                gst::debug!(CAT, imp: self, "Using sample segment: {:?}", sample.segment());
+                sample.segment().cloned()
+            }
+            _ => unreachable!(),
+        };
+
+        if let Some(caps) = caps_to_set {
+            gst::debug!(CAT, imp: self, "Setting caps: {:?}", caps);
+            self.set_caps(caps)?;
+        }
+
+        if let Some(segment) = segment {
+            let seg = match segment.downcast_ref::<gst::format::Time>() {
+                Some(seg) => seg.clone(),
+                None => {
+                    gst::element_imp_error!(
+                        self,
+                        gst::StreamError::Failed,
+                        ["Time segment needed"]
+                    );
+                    return Err(gst::FlowError::Error);
+                }
+            };
+
             let mut state = self.state.lock().unwrap();
-            if Some(segment) != state.segment.as_ref() {
-                state.segment = Some(segment.to_owned());
+            if Some(seg.clone()).as_ref() != state.current_segment.as_ref() {
+                state.current_segment = Some(seg);
                 drop(state);
-                gst::debug!(CAT, "Pushing segment {segment:?}");
 
-                self.obj().push_segment(segment);
+                gst::debug!(CAT, imp: self, "Pushing segment: {segment:?}");
+                self.obj().push_segment(segment.upcast_ref());
             }
         }
 
-        if let Some(buffer) = sample.buffer_owned() {
-            gst::trace!(CAT, imp: self, "Pushing buffer: {:?}", buffer);
+        if let Some(buffer) = pipeline.seek_handler().handle_sample(&sample) {
             Ok(gst_base::subclass::base_src::CreateSuccess::NewBuffer(
                 buffer,
             ))
-        } else if let Some(buffer_list) = sample.buffer_list_owned() {
-            Ok(gst_base::subclass::base_src::CreateSuccess::NewBufferList(
-                buffer_list,
-            ))
+        } else if sample.buffer_list_owned().is_some() {
+            unreachable!("Buffer lists are not supported");
         } else {
             gst::error!(CAT, imp: self, "Got sample without buffer or buffer list");
 
@@ -882,10 +1163,11 @@ impl BaseSrcImpl for UriDecodePoolSrc {
         let pipeline = {
             let mut state = self.state.lock().unwrap();
 
-            state.segment = None;
+            state.current_segment = None;
             state.seek_seqnum = None;
             state.segment_seqnum = None;
             state.seek_event = None;
+            state.pending_seek = None;
 
             let decoderpipe = state.decoderpipe.as_ref().unwrap().clone();
             let pipeline = decoderpipe.pipeline();

@@ -149,15 +149,15 @@ impl PlaybinPool {
     }
 
     fn deinit(&self) {
+        gst::error!(CAT, "Deinitializing pool");
         self.set_cleanup_timeout(0);
 
         let obj = self.obj();
         let mut state = self.state.lock().unwrap();
         while let Some(pipeline) = state.prepared_pipelines.pop() {
-            obj.emit_by_name::<()>(
-                "prepared-pipeline-removed",
-                &[&pipeline.imp().target_src().unwrap()],
-            );
+            if let Some(src) = pipeline.imp().target_src() {
+                obj.emit_by_name::<()>("prepared-pipeline-removed", &[&src]);
+            }
             if let Err(err) = pipeline.imp().release() {
                 gst::error!(CAT, "Failed to release pipeline: {}", err);
             }
@@ -218,7 +218,6 @@ impl PlaybinPool {
         }
 
         let decoderpipe = self.get_unused_or_create_pipeline(src, &mut state);
-
         gst::debug!(CAT, imp: self, "Starting {decoderpipe:?}");
         if let Err(err) = decoderpipe.imp().play() {
             gst::warning!(CAT, imp: self, "Failed to play pipeline: {}", err);
@@ -234,35 +233,41 @@ impl PlaybinPool {
         gst::debug!(CAT, "Getting pipeline for {:?}", src.name());
         let mut state = self.state.lock().unwrap();
 
-        if let Some(position) = state
+        let (decoderpipe, mut state) = if let Some(position) = state
             .prepared_pipelines
             .iter()
             .position(|p| p.imp().target_src().as_ref() == Some(src))
         {
             let pipe = state.prepared_pipelines.remove(position);
-            state.running_pipelines.push(pipe.clone());
             drop(state);
 
             self.obj()
                 .emit_by_name::<()>("prepared-pipeline-removed", &[&src]);
 
-            gst::info!(
+            let pipeline = pipe.pipeline();
+            gst::error!(
                 CAT,
-                "Using already prepared pipeline for {} -- {:?}?stream-id{:?} -- {:?}",
+                obj: pipeline,
+                "{} for {} -- {:?}?stream-id{:?} -- {:?}",
+                if pipe.imp().seek_handler.has_eos_sample() {
+                    "Reusing already running pipeline to try to keep flow"
+                } else {
+                    "Using already prepared pipeline"
+                },
                 src.name(),
                 src.uri(),
                 src.stream_id(),
-                pipe.pipeline().state(gst::ClockTime::NONE)
+                pipeline.state(gst::ClockTime::NONE)
             );
 
-            pipe
+            (pipe, self.state.lock().unwrap())
         } else {
-            let decoderpipe = self.get_unused_or_create_pipeline(src, &mut state);
+            (self.get_unused_or_create_pipeline(src, &mut state), state)
+        };
 
-            state.running_pipelines.push(decoderpipe.clone());
+        state.running_pipelines.push(decoderpipe.clone());
 
-            decoderpipe
-        }
+        decoderpipe
     }
 
     fn get_unused_or_create_pipeline<'lt>(
@@ -273,6 +278,7 @@ impl PlaybinPool {
         let uri = src.uri();
         let caps = src.caps();
         let stream_id = src.stream_id();
+        let seek = src.imp().initial_seek_event();
 
         let decoderpipe = if let Some(position) = state.unused_pipelines.iter().position(|p| {
             stream_id.is_some()
@@ -282,6 +288,17 @@ impl PlaybinPool {
             gst::debug!(CAT, "Reusing the exact same pipeline for {:?}", stream_id);
             Some(state.unused_pipelines.remove(position))
         } else if let Some(position) = state.unused_pipelines.iter().position(|p| {
+            let initial_seek = p.imp().initial_seek();
+
+            if initial_seek.is_some() && seek.is_none() {
+                return false;
+            } else if initial_seek.is_some()
+                && seek.as_ref().unwrap().structure() != initial_seek.as_ref().unwrap().structure()
+            {
+                gst::error!(CAT, "Seek events are different");
+                return false;
+            }
+
             p.uridecodebin()
                 .property::<Option<String>>("uri")
                 .map_or(false, |uri| uri.as_str() != uri)
@@ -299,10 +316,10 @@ impl PlaybinPool {
 
         let decoderpipe = decoderpipe.map_or_else(
             || {
-                gst::debug!(CAT, "Starting new pipeline");
+                gst::error!(CAT, "Starting new pipeline for {:?}", src.name(),);
 
                 let pipeline =
-                    DecoderPipeline::new(uri.as_ref(), &caps, stream_id.as_deref(), &self.obj());
+                    DecoderPipeline::new(&uri, &caps, stream_id.as_deref(), &self.obj(), seek);
                 let obj = self.obj();
                 let mut outstandings = self.outstandings.n.lock().unwrap();
                 *outstandings += 1;
@@ -314,7 +331,7 @@ impl PlaybinPool {
                     false,
                     glib::closure!(@watch obj => move
                         |pipeline: DecoderPipeline| {
-                            gst::debug!(CAT, obj: obj, "{pipeline:?} not used anymore.");
+                            gst::error!(CAT, obj: obj, "{pipeline:?} not used anymore.");
 
                             let this = obj.imp();
                             this.state.lock().unwrap().unused_pipelines.insert(0, pipeline);
@@ -339,7 +356,7 @@ impl PlaybinPool {
                 pipeline
             },
             |decoderpipe| {
-                decoderpipe.reset(uri.as_ref(), &caps, stream_id.as_deref());
+                decoderpipe.reset(&uri, &caps, stream_id.as_deref());
 
                 gst::debug!(CAT, "Reusing existing pipeline: {:?}", decoderpipe,);
 
@@ -352,7 +369,6 @@ impl PlaybinPool {
     }
 
     fn cleanup(&self) {
-        gst::debug!(CAT, "Cleaning up unused pipelines");
         let mut state = self.state.lock().unwrap();
 
         let mut cleaned_up = Vec::new();
@@ -371,7 +387,6 @@ impl PlaybinPool {
                 true
             }
         });
-        gst::debug!(CAT, "Unused pipelines: {:?}", state.unused_pipelines.len());
         drop(state);
 
         let removed = cleaned_up.len();
@@ -382,15 +397,42 @@ impl PlaybinPool {
         let mut outstandings = self.outstandings.n.lock().unwrap();
         *outstandings -= removed as u32;
         self.outstandings.cond.notify_one();
-        drop(outstandings);
     }
 
     pub(crate) fn release(&self, pipeline: DecoderPipeline) {
-        self.state
-            .lock()
-            .unwrap()
-            .running_pipelines
-            .retain(|p| p != &pipeline);
+        let mut state = self.state.lock().unwrap();
+
+        state.running_pipelines.retain(|p| p != &pipeline);
+
+        let pipeline_imp = pipeline.imp();
+        if pipeline_imp.seek_handler.has_eos_sample() {
+            gst::error!(CAT, obj: pipeline, "Pipeline has EOS sample, keeping it alive for 20s");
+
+            // Try to make it be reused asap
+            state.prepared_pipelines.insert(0, pipeline.clone());
+            drop(state);
+            RUNTIME.spawn(glib::clone!(@weak self as this, @weak pipeline => async move {
+                let cleanup_timeout = std::time::Duration::from_secs(DEFAULT_CLEANUP_TIMEOUT_SEC);
+                gst::info!(
+                    CAT,
+                    "Cleaning up unused pipelines in {:?} seconds",
+                    cleanup_timeout
+                );
+                tokio::time::sleep(cleanup_timeout).await;
+
+                if pipeline.imp().target_src().is_none() {
+                    if let Err(e) = pipeline.imp().release() {
+                        gst::error!(CAT, imp: this, "Failed to release pipeline: {e:?}");
+                    }
+
+                    this.cleanup();
+                }
+            }));
+
+            return;
+        } else {
+            drop(state);
+        }
 
         if let Err(err) = pipeline.imp().release() {
             gst::error!(CAT, "Failed to release pipeline: {}", err);
