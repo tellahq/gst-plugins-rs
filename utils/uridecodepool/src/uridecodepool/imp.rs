@@ -92,8 +92,8 @@ pub struct UriDecodePoolSrc {
     state: Mutex<State>,
     start_completed: Mutex<bool>,
 
-    #[property(name="pool", get, type = super::PlaybinPool, blurb = "The pool used")]
-    pool: super::PlaybinPool,
+    #[property(name="pool", get, type = super::UriDecodePool, blurb = "The pool used")]
+    pool: super::UriDecodePool,
 }
 
 impl Default for UriDecodePoolSrc {
@@ -102,7 +102,7 @@ impl Default for UriDecodePoolSrc {
             settings: Mutex::new(Settings::default()),
             state: Mutex::new(State::default()),
             start_completed: Default::default(),
-            pool: pool::PLAYBIN_POOL.lock().unwrap().clone(),
+            pool: pool::PIPELINE_POOL_POOL.lock().unwrap().clone(),
         }
     }
 }
