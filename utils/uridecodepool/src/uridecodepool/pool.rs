@@ -59,8 +59,8 @@ struct Outstandings {
 }
 
 #[derive(Properties, Debug, Default)]
-#[properties(wrapper_type = super::PlaybinPool)]
-pub struct PlaybinPool {
+#[properties(wrapper_type = super::UriDecodePool)]
+pub struct UriDecodePool {
     state: Mutex<State>,
     // Number of pipelines in used */
     outstandings: Outstandings,
@@ -75,13 +75,13 @@ pub struct PlaybinPool {
 }
 
 #[glib::object_subclass]
-impl ObjectSubclass for PlaybinPool {
-    const NAME: &'static str = "GstPlaybinPool";
-    type Type = super::PlaybinPool;
+impl ObjectSubclass for UriDecodePool {
+    const NAME: &'static str = "GstUriDecodePool";
+    type Type = super::UriDecodePool;
 }
 
 #[glib::derived_properties]
-impl ObjectImpl for PlaybinPool {
+impl ObjectImpl for UriDecodePool {
     fn signals() -> &'static [glib::subclass::Signal] {
         static SIGNALS: Lazy<Vec<glib::subclass::Signal>> = Lazy::new(|| {
             vec![
@@ -96,7 +96,7 @@ impl ObjectImpl for PlaybinPool {
                     .return_type::<bool>()
                     .action()
                     .class_handler(|_, args| {
-                        let pool = args[0].get::<super::PlaybinPool>().unwrap();
+                        let pool = args[0].get::<super::UriDecodePool>().unwrap();
                         let src = args[1].get::<&super::UriDecodePoolSrc>().unwrap();
 
                         Some(pool.imp().prepare_pipeline(src).into())
@@ -107,14 +107,14 @@ impl ObjectImpl for PlaybinPool {
                     .return_type::<bool>()
                     .action()
                     .class_handler(|_, args| {
-                        let pool = args[0].get::<super::PlaybinPool>().unwrap();
+                        let pool = args[0].get::<super::UriDecodePool>().unwrap();
                         let src = args[1].get::<&super::UriDecodePoolSrc>().unwrap();
 
                         Some(pool.imp().unprepare_pipeline(src).into())
                     })
                     .build(),
                 /**
-                 * GstPlaybinPool::deinit:
+                 * GstUriDecodePool::deinit:
                  *
                  * Deinitialize the pool, should be called when deinitializing
                  * GStreamer.
@@ -122,7 +122,7 @@ impl ObjectImpl for PlaybinPool {
                 glib::subclass::Signal::builder("deinit")
                     .action()
                     .class_handler(|_, args| {
-                        let pool = args[0].get::<super::PlaybinPool>().unwrap();
+                        let pool = args[0].get::<super::UriDecodePool>().unwrap();
 
                         pool.imp().deinit();
                         None
@@ -135,10 +135,10 @@ impl ObjectImpl for PlaybinPool {
     }
 }
 
-pub(crate) static PLAYBIN_POOL: Lazy<Mutex<super::PlaybinPool>> =
+pub(crate) static PIPELINE_POOL_POOL: Lazy<Mutex<super::UriDecodePool>> =
     Lazy::new(|| Mutex::new(glib::Object::new()));
 
-impl PlaybinPool {
+impl UriDecodePool {
     fn set_cleanup_timeout(&self, timeout: u64) {
         {
             let mut settings = self.settings.lock().unwrap();

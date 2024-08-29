@@ -29,7 +29,7 @@ struct State {
     initial_seek: Option<gst::Event>,
     last_seek_seqnum: gst::Seqnum,
 
-    pool: Option<super::PlaybinPool>,
+    pool: Option<super::UriDecodePool>,
 }
 
 #[derive(Properties, Debug)]
@@ -39,7 +39,7 @@ pub struct DecoderPipeline {
     pub uridecodebin: gst::Element,
     pub sink: gst_app::AppSink,
 
-    #[property(name="pool", set, get, type = super::PlaybinPool, construct_only, member = pool)]
+    #[property(name="pool", set, get, type = super::UriDecodePool, construct_only, member = pool)]
     #[property(name="initial-seek", set, get, type = gst::Event, construct_only, member = initial_seek)]
     state: Mutex<State>,
 
