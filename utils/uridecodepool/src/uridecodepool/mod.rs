@@ -16,10 +16,10 @@ glib::wrapper! {
 }
 
 glib::wrapper! {
-    pub struct PlaybinPool(ObjectSubclass<pool::PlaybinPool>);
+    pub struct UriDecodePool(ObjectSubclass<pool::UriDecodePool>);
 }
 
-impl PlaybinPool {
+impl UriDecodePool {
     pub(crate) fn get_decoderpipe(&self, src: &UriDecodePoolSrc) -> DecoderPipeline {
         self.imp().get(src)
     }
@@ -66,7 +66,7 @@ impl DecoderPipeline {
         uri: &str,
         caps: &gst::Caps,
         stream_id: Option<&str>,
-        pool: &PlaybinPool,
+        pool: &UriDecodePool,
         initial_seek: Option<gst::Event>,
     ) -> DecoderPipeline {
         let this: DecoderPipeline = glib::Object::builder()
