@@ -120,8 +120,8 @@ impl Default for DecoderPipeline {
             }),
             state_lock: ReentrantMutex::new(false),
             tearing_down: AtomicBool::new(false),
+            seek_handler: SeekHandler::new(&name),
             name,
-            seek_handler: SeekHandler::default(),
         }
     }
 }
@@ -222,12 +222,18 @@ impl DecoderPipeline {
 
                 return;
             }
-            gst::error!(CAT, imp: self, "Failed link pads {:?}:{:?}: {:#?}\n -> {:?}:{}: {:#?} \n: {:?}",
-                pad.parent().map(|p| p.name()), pad.name(),
+            gst::error!(
+                CAT,
+                imp: self,
+                "Failed link pads {:?}:{:?}: {:#?}\n -> {:?}:{}: {:#?} \n: {:?}",
+                pad.parent().map(|p| p.name()),
+                pad.name(),
                 pad.query_caps(None),
-                sinkpad.parent().map(|p| p.name()), sinkpad.name(),
+                sinkpad.parent().map(|p| p.name()),
+                sinkpad.name(),
                 sinkpad.query_caps(None),
-                err);
+                err
+            );
         }
     }
 
@@ -333,6 +339,7 @@ impl DecoderPipeline {
             self.pipeline.clone()
         };
 
+        gst::error!(CAT, obj: pipeline, "--> Sending seek {:?}", seek_event);
         if !pipeline.send_event(seek_event) {
             gst::error!(CAT, obj: self.pipeline, "Failed to seek");
             return false;
@@ -496,7 +503,7 @@ impl DecoderPipeline {
                 return;
             };
 
-            gst::error!(CAT, obj: pipeline, "--> Sending pending seek {:?}", seek_event);
+            gst::error!(CAT, obj: pipeline, "--> Sending pending seek {:?}", seek_event.seqnum());
             drop(state);
 
             if !pipeline.send_event(seek_event) {
@@ -530,12 +537,18 @@ impl DecoderPipeline {
         gst::debug!(CAT, obj: self.pipeline, "Starting pipeline");
 
         self.tearing_down.store(false, Ordering::SeqCst);
-        if self.pipeline.state(None).1 < gst::State::Paused {
+        let (res, state, pending) = self.pipeline.state(gst::ClockTime::ZERO);
+        res?;
+        if state < gst::State::Paused {
             if let Some(seek_event) = self.initial_seek() {
                 gst::debug!(CAT, obj: self.pipeline, "Using initial seek as pending_seek: {:?}", seek_event);
                 self.state.lock().unwrap().pending_seek = Some(seek_event);
             }
         }
+        gst::debug!(
+            CAT,
+            "Pipeline state is {state:?} and pending is {pending:?}"
+        );
         self.pipeline.set_state(gst::State::Playing)
     }
 
@@ -598,7 +611,8 @@ impl DecoderPipeline {
                 gst::error!(CAT, obj: pipeline, "Could not teardown pipeline {err:?}");
             }
 
-            this.seek_handler.reset();
+            this.seek_handler.reset(this.pipeline().upcast_ref());
+            obj.emit_by_name::<()>("stopped", &[]);
         });
     }
 }
@@ -606,8 +620,12 @@ impl DecoderPipeline {
 #[glib::derived_properties]
 impl ObjectImpl for DecoderPipeline {
     fn signals() -> &'static [glib::subclass::Signal] {
-        static SIGNALS: Lazy<Vec<glib::subclass::Signal>> =
-            Lazy::new(|| vec![glib::subclass::Signal::builder("released").build()]);
+        static SIGNALS: Lazy<Vec<glib::subclass::Signal>> = Lazy::new(|| {
+            vec![
+                glib::subclass::Signal::builder("released").build(),
+                glib::subclass::Signal::builder("stopped").build(),
+            ]
+        });
 
         SIGNALS.as_ref()
     }
