@@ -68,7 +68,7 @@ struct State {
 #[derive(Properties, Debug)]
 #[properties(wrapper_type = super::UriDecodePoolSrc)]
 pub struct UriDecodePoolSrc {
-    #[property(name="uri", get, set, type = String, member = uri, blurb = "The URI to play")]
+    #[property(name="uri", get, set, type = Option<String>, member = uri, blurb = "The URI to play")]
     #[property(name = "caps", get, set, type = gst::Caps, member = caps,
         blurb = "The caps of the stream to target"
     )]
@@ -123,7 +123,7 @@ static DUMPDOT_DIR: Lazy<Option<Box<PathBuf>>> = Lazy::new(|| {
 pub(crate) static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
     gst::DebugCategory::new(
         "uridecodepoolsrc",
-        gst::DebugColorFlags::empty(),
+        gst::DebugColorFlags::FG_YELLOW,
         Some("Playbin Pool Src"),
     )
 });
@@ -591,7 +591,6 @@ impl UriDecodePoolSrc {
 
         let obj = self.obj();
         let mut state = self.state.lock().unwrap();
-        decoderpipe.seek_handler().start();
         state.source_setup_sigid = Some(decoderpipe.uridecodebin().connect_closure(
             "source-setup",
             false,
@@ -615,7 +614,7 @@ impl UriDecodePoolSrc {
             .map(|caps| caps.caps_owned())
     }
 
-    fn decoderpipe(&self) -> Option<DecoderPipeline> {
+    pub fn decoderpipe(&self) -> Option<DecoderPipeline> {
         self.state.lock().unwrap().decoderpipe.clone()
     }
 
@@ -703,29 +702,7 @@ impl UriDecodePoolSrc {
         }
     }
 
-    fn eos_probe(
-        &self,
-        probe_info: &mut gst::PadProbeInfo,
-        eos: &gst::event::Eos,
-    ) -> gst::PadProbeReturn {
-        let state = self.state.lock().unwrap();
-
-        gst::debug!(CAT, imp: self, "Got {eos:?}");
-        if let Some(seqnum) = state.segment_seqnum.as_ref() {
-            if eos.seqnum() != *seqnum {
-                let mut builder = gst::event::Eos::builder()
-                    .running_time_offset(eos.running_time_offset())
-                    .seqnum(eos.seqnum());
-                builder = builder.seqnum(*seqnum);
-                gst::warning!(CAT, imp: self, "Forcing {seqnum:?} on EOS as previous one was wrong ({:#?})", eos);
-                probe_info.data = Some(gst::PadProbeData::Event(builder.build()));
-            }
-        }
-
-        gst::PadProbeReturn::Ok
-    }
-
-    fn set_caps(&self, caps: gst::Caps) -> Result<(), gst::FlowError> {
+    pub fn set_caps(&self, caps: gst::Caps) -> Result<(), gst::FlowError> {
         self.obj()
             .upcast_ref::<gst_base::BaseSrc>()
             .set_caps(&caps)
@@ -809,7 +786,6 @@ impl ObjectImpl for UriDecodePoolSrc {
                     }
                     gst::EventView::StreamStart(s) => this.stream_start_probe(probe_info, s),
                     gst::EventView::Segment(s) => this.segment_probe(probe_info, s),
-                    gst::EventView::Eos(eos) => this.eos_probe(probe_info, eos),
                     _ => gst::PadProbeReturn::Ok
                 }
 
@@ -824,17 +800,18 @@ impl ElementImpl for UriDecodePoolSrc {
         &self,
         transition: gst::StateChange,
     ) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
-        if transition == gst::StateChange::PausedToReady {
-            // Reset the seek_handler to ensure that we do not end up waiting for a seek while
-            // tearing down. We can't do it in `.unlock` although it would make sense
-            // it is also called on FLUSH_START which is received when seeking (and detinifitely do
-            // not want to reset the seek handler in that case)
-            if let Some(p) = self.decoderpipe() {
-                p.seek_handler().stop(&self.obj())
+        let res = self.parent_change_state(transition);
+
+        // Handle the case where nlecomposition sent a 'fake' seek event right before being tore
+        // down
+        if transition == gst::StateChange::ReadyToNull {
+            let mut state = self.state.lock().unwrap();
+            if let Some(pipeline) = state.decoderpipe.take() {
+                self.pool.release(pipeline);
             }
         }
 
-        self.parent_change_state(transition)
+        res
     }
 
     fn send_event(&self, event: gst::Event) -> bool {
@@ -846,6 +823,27 @@ impl ElementImpl for UriDecodePoolSrc {
             // but the underlying pipeline is not ready yet.
             if self.handle_seek_event(&event) {
                 return true;
+            }
+        } else if let gst::EventView::CustomUpstream(e) = event.view() {
+            if event
+                .structure()
+                .map_or(false, |s| s.has_name("nlecomposition-seek"))
+            {
+                let has_uri = self.settings.lock().unwrap().uri.is_some();
+                let decoderpipe = if has_uri {
+                    self.pool.get_decoderpipe(&self.obj())
+                } else {
+                    return false;
+                };
+
+                self.state.lock().unwrap().decoderpipe = Some(decoderpipe.clone());
+                if decoderpipe
+                    .seek_handler()
+                    .handle_nlecomposition_seek(&self.obj(), e)
+                {
+                    gst::error!(CAT, imp: self, "NleComposition FAKE seek handled");
+                    return true;
+                }
             }
         }
 
@@ -965,7 +963,9 @@ impl BaseSrcImpl for UriDecodePoolSrc {
         gst::debug!(CAT, imp: self, "Starting");
 
         let has_uri = self.settings.lock().unwrap().uri.is_some();
-        let decoderpipe = if has_uri {
+        let decoderpipe = if let Some(decoderpipe) = self.decoderpipe() {
+            decoderpipe
+        } else if has_uri {
             self.pool.get_decoderpipe(&self.obj())
         } else {
             return Err(gst::error_msg!(
@@ -1012,12 +1012,11 @@ impl BaseSrcImpl for UriDecodePoolSrc {
     fn negotiate(&self) -> Result<(), gst::LoggableError> {
         if self
             .decoderpipe()
-            .map_or(false, |p| p.seek_handler().get_eos_sample().is_some())
+            .map_or(false, |p| p.seek_handler().has_eos_sample())
         {
-            // When inside `nlecomposition`, keeping playing a new segment after stack change
             // we need to use the caps from the sample that triggered the fake EOS, so we
             // have to wait for it
-            gst::info!(CAT, imp: self, "Changing stack, waiting for previous sample before renegotiating");
+            gst::error!(CAT, imp: self, "Changing stack, waiting for previous sample before renegotiating");
 
             return Ok(());
         }
@@ -1079,11 +1078,13 @@ impl BaseSrcImpl for UriDecodePoolSrc {
     ) -> Result<gst_base::subclass::base_src::CreateSuccess, gst::FlowError> {
         let pipeline = self.decoderpipe().unwrap();
 
-        gst::log!(CAT, imp: self, "create with underlying pipeline state: {:?}", pipeline.pipeline().state(gst::ClockTime::ZERO));
+        gst::log!(CAT, imp: self, "create with underlying pipeline {} state: {:?}", pipeline.pipeline().name(), pipeline.pipeline().state(gst::ClockTime::ZERO));
 
         // If we are inside nlecomposition, we need to use the sample that triggered the fake EOS
         // and set the caps from it.
-        let (sample, caps_to_set) = if let Some(sample) = pipeline.seek_handler().get_eos_sample() {
+        let (sample, caps_to_set) = if let Some(sample) =
+            pipeline.seek_handler().get_eos_sample(&self.obj())?
+        {
             if let Some(caps) = sample
                 .caps()
                 .map_or_else(|| self.get_appsink_caps(), |caps| Some(caps.to_owned()))
@@ -1105,7 +1106,7 @@ impl BaseSrcImpl for UriDecodePoolSrc {
 
         let segment = match pipeline.seek_handler().process(&self.obj(), &sample)? {
             SeekInfo::SeekSegment(seqnum, segment) => {
-                gst::debug!(CAT, imp: self, "Got seek segment after process --> new seqnum: {seqnum:?} -- {:?}",  self.state.lock().unwrap().seek_seqnum);
+                gst::log!(CAT, imp: self, "Got seek segment after process --> new seqnum: {seqnum:?} -- {:?}",  self.state.lock().unwrap().seek_seqnum);
                 self.state.lock().unwrap().segment_seqnum = Some(seqnum);
 
                 Some(segment)
