@@ -1,59 +1,41 @@
-use gst::prelude::*;
+// SPDX-License-Identifier: MPL-2.0
 use gst::subclass::prelude::*;
+use gst::{glib, prelude::*};
 use gst_base::prelude::*;
-use std::sync::{Condvar, Mutex, MutexGuard};
+use std::sync::Mutex;
 
 use crate::uridecodepool::imp::CAT;
 
-#[derive(Debug, Default)]
-struct NleCompositionSeekData {
-    // Wether the seek handler is started
-    started: bool,
-    expect_nle_seek: bool,
-    // Wether the seek handler is waiting for a seek to be sent by a parent nlecomposition
-    waiting: bool,
-    seek: Option<gst::event::Seek<gst::Event>>,
-}
-
 #[derive(Debug)]
 pub(crate) struct SeekHandler {
-    // Lock order is state -> nlecomposition_seek_data
     state: Mutex<State>,
 
-    // nlecomposition_seek_data is used to signal that we are waiting for a seek to be sent by
-    // a parent nlecomposition element.
-    // Cases:
-    // - We expected `nlecomposition` to send a seek_
-    //   - The seek doesn't match our expectations, ignore it
-    //   - The seek matches our expectations, use it
-    // - We didn't expect a seek
-    // - The associated source is stopped
-    nlecomposition_seek_data: Mutex<NleCompositionSeekData>,
-    waiting_nlecomposition_seek_cond: Condvar,
-    consumed_nlecomposition_seek_cond: Condvar,
+    name: String,
 }
 
 #[derive(Debug, Default)]
 struct State {
     stream_time: Option<gst::ClockTime>,
     seek_info: SeekInfo,
+
+    // Seek event received from NLE while relinking stack
+    nle_seek: Option<gst::Event>,
+
+    // The actual seek event has been handled
+    handled_composition_seek: bool,
+    probe_id: Option<gst::PadProbeId>,
+    pad_probe: glib::WeakRef<gst::Pad>,
 }
 
 impl State {
-    fn reset(&mut self) {
+    fn reset(&mut self, obj: &glib::Object) {
+        gst::debug!(CAT, obj: obj, "Resetting seek state");
         self.stream_time = None;
         self.seek_info = SeekInfo::None;
-    }
-}
-
-impl Default for SeekHandler {
-    fn default() -> Self {
-        Self {
-            nlecomposition_seek_data: Mutex::new(NleCompositionSeekData::default()),
-            consumed_nlecomposition_seek_cond: Condvar::new(),
-            waiting_nlecomposition_seek_cond: Condvar::new(),
-
-            state: Mutex::new(State::default()),
+        self.handled_composition_seek = false;
+        self.nle_seek = None;
+        if let (Some(pad), Some(probe_id)) = (self.pad_probe.upgrade(), self.probe_id.take()) {
+            pad.remove_probe(probe_id);
         }
     }
 }
@@ -63,46 +45,22 @@ pub(crate) enum SeekInfo {
     #[default]
     None,
     SeekSegment(gst::Seqnum, gst::Segment),
-    PreviousSeekDone(gst::Sample, gst::Segment),
+    PreviousSeekDone(gst::Sample, Option<gst::Segment>),
 }
 
 impl SeekHandler {
-    // Full means that we should also reset all ibform
-    fn flush_locked(&self, state: &MutexGuard<State>, stop: bool) {
-        let mut nlecomposition_seek_data = self.nlecomposition_seek_data.lock().unwrap();
-
-        if stop {
-            nlecomposition_seek_data.started = false;
+    pub fn new(name: &str) -> Self {
+        Self {
+            state: Mutex::new(State::default()),
+            name: name.to_string(),
         }
-        let _ = nlecomposition_seek_data.seek.take();
-        gst::debug!(CAT, "Flushing, notifying_all");
-        self.waiting_nlecomposition_seek_cond.notify_all();
-        self.consumed_nlecomposition_seek_cond.notify_all();
-
-        nlecomposition_seek_data.expect_nle_seek =
-            matches!(state.seek_info, SeekInfo::PreviousSeekDone(_, _));
-        gst::debug!(
-            CAT,
-            "Reseting seek handler - waiting seek? {:?}",
-            state.seek_info
-        );
     }
 
-    pub(crate) fn start(&self) {
-        self.nlecomposition_seek_data.lock().unwrap().started = true;
-    }
-
-    pub(crate) fn stop(&self, obj: &super::UriDecodePoolSrc) {
-        gst::debug!(CAT, obj: obj, "STOPPING SEEK HANDLER");
-        let state = self.state.lock().unwrap();
-        self.flush_locked(&state, true);
-    }
-
-    pub(crate) fn reset(&self) {
+    pub(crate) fn reset(&self, obj: &glib::Object) {
         let mut state = self.state.lock().unwrap();
-        self.flush_locked(&state, false);
 
-        state.reset();
+        state.reset(obj);
+        gst::error!(CAT, obj: obj, "Setting {} seek_info: {:?}", self.name, state.seek_info);
     }
 
     pub(crate) fn has_eos_sample(&self) -> bool {
@@ -110,6 +68,10 @@ impl SeekHandler {
             self.state.lock().unwrap().seek_info,
             SeekInfo::PreviousSeekDone(_, _)
         );
+
+        if res {
+            gst::error!(CAT, "{} has eos sample", self.name);
+        }
 
         res
     }
@@ -209,14 +171,11 @@ impl SeekHandler {
             } else if seek_segment.stop().is_some() && Some(start) >= seek_segment.stop()
                 || buffer_starts_at_end_of_segment
             {
-                self.nlecomposition_seek_data
-                    .lock()
-                    .unwrap()
-                    .expect_nle_seek = true;
-                gst::error!(CAT, obj: obj, "||||||||||||<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Buffer reached end of segment {seek_segment:?} -> {:?}", *self.nlecomposition_seek_data.lock().unwrap());
-                gst::error!(CAT, "WAITING SEEK IS TRUE");
+                gst::info!(CAT, obj: obj, "Buffer reached end of segment {seek_segment:?}");
                 state.seek_info =
-                    SeekInfo::PreviousSeekDone(sample.clone(), seek_segment.clone().upcast());
+                    SeekInfo::PreviousSeekDone(sample.clone(), Some(seek_segment.clone().upcast()));
+                gst::error!(CAT, obj: obj, "Setting {} seek_info: {:?}", self.name, state.seek_info);
+                state.handled_composition_seek = false;
                 return Err(gst::FlowError::Eos);
             }
         } else {
@@ -234,13 +193,11 @@ impl SeekHandler {
                     .expect("Can't have a NONE segment.start in reverse playback")
                 || buffer_starts_at_end_of_segment
             {
-                self.nlecomposition_seek_data
-                    .lock()
-                    .unwrap()
-                    .expect_nle_seek = true;
-                gst::error!(CAT, obj: obj, "+++++++++++++++++>>>>>>>>>>>> Buffer reached end of segment");
+                gst::info!(CAT, obj: obj, "Buffer reached end of segment {seek_segment:?}");
                 state.seek_info =
-                    SeekInfo::PreviousSeekDone(sample.clone(), seek_segment.clone().upcast());
+                    SeekInfo::PreviousSeekDone(sample.clone(), Some(seek_segment.clone().upcast()));
+                gst::error!(CAT, obj: obj, "Setting {} seek_info: {:?}", self.name, state.seek_info);
+                state.handled_composition_seek = false;
                 return Err(gst::FlowError::Eos);
             }
         }
@@ -248,12 +205,23 @@ impl SeekHandler {
         Ok(false)
     }
 
-    pub(crate) fn get_eos_sample(&self) -> Option<gst::Sample> {
+    pub(crate) fn get_eos_sample(
+        &self,
+        obj: &super::UriDecodePoolSrc,
+    ) -> Result<Option<gst::Sample>, gst::FlowError> {
         let state = self.state.lock().unwrap();
+        if state.nle_seek.as_ref().is_some() && !state.handled_composition_seek {
+            gst::debug!(CAT, obj: obj, "Not checking state because waiting for nleseek to be handled {} seek_info: {:?}", self.name, state.seek_info);
+
+            return Err(gst::FlowError::Eos);
+        }
+
         if let SeekInfo::PreviousSeekDone(ref sample, _) = state.seek_info {
-            Some(sample.clone())
+            gst::info!(CAT, obj: obj, "Got EOS sample: {:?}", sample);
+            Ok(Some(sample.clone()))
         } else {
-            None
+            gst::log!(CAT, obj: obj, "No EOS sample");
+            Ok(None)
         }
     }
 
@@ -262,159 +230,148 @@ impl SeekHandler {
         obj: &super::UriDecodePoolSrc,
         sample: &gst::Sample,
     ) -> Result<SeekInfo, gst::FlowError> {
-        let state = self.state.lock().unwrap();
-        let expecting_new_stack = matches!(state.seek_info, SeekInfo::PreviousSeekDone(_, _));
-        let duration = obj.duration();
-        if state.stream_time.is_some() && !expecting_new_stack || duration.is_none() {
-            let res = state.seek_info.clone();
+        let mut state = self.state.lock().unwrap();
+
+        gst::log!(CAT, obj: obj, "nle_seek: {:?} -- handled? {:?}", state.nle_seek, state.handled_composition_seek);
+        if state.nle_seek.is_some() && !state.handled_composition_seek {
+            state.seek_info = SeekInfo::PreviousSeekDone(sample.clone(), sample.segment().cloned());
             drop(state);
 
-            self.check_eos(obj, sample)?;
+            gst::info!(CAT, obj: obj, "Force unblocking the nlecompositon by sending EOS, keeping sample around");
+            if let Some(caps) = sample.caps() {
+                gst::log!(CAT, obj: obj, "Pushing caps {:?}", caps);
+                if let Err(e) = obj.imp().set_caps(caps.to_owned()) {
+                    gst::error!(CAT, obj: obj, "Failed to push caps: {:?}", e);
+                }
+            }
 
-            return Ok(res);
+            return Err(gst::FlowError::Eos);
         }
+
+        if matches!(state.seek_info, SeekInfo::PreviousSeekDone(_, _)) {
+            if let Some(nle_seek) = state.nle_seek.as_ref() {
+                let (rate, flags, start_type, start, stop_type, stop) =
+                    if let gst::EventView::Seek(s) = nle_seek.view() {
+                        s.get()
+                    } else {
+                        unreachable!();
+                    };
+                let mut segment = gst::FormattedSegment::<gst::ClockTime>::new().upcast();
+                segment.do_seek(rate, flags, start_type, start, stop_type, stop);
+
+                state.seek_info = SeekInfo::SeekSegment(nle_seek.seqnum(), segment);
+                gst::info!(CAT, obj: obj, "Setting {} seek_info: {:?}", self.name, state.seek_info);
+            } else {
+                state.seek_info = SeekInfo::None;
+                gst::info!(CAT, obj: obj, "Setting {} seek_info: {:?}", self.name, state.seek_info);
+            }
+        }
+
+        let res = state.seek_info.clone();
         drop(state);
 
-        let return_seek_info = |state: Option<MutexGuard<State>>, info: SeekInfo| {
-            state.map_or_else(
-                || self.state.lock().unwrap().seek_info = info.clone(),
-                |mut state| state.seek_info = info.clone(),
-            );
+        self.check_eos(obj, sample)?;
 
-            gst::error!(CAT, obj: obj, "WAITING SEEK IS FALSE");
-            self.consumed_nlecomposition_seek_cond.notify_all();
+        Ok(res)
+    }
 
-            gst::error!(CAT, obj: obj, "====> Returning seek info: {info:?}");
+    pub(crate) fn handle_nlecomposition_seek(
+        &self,
+        obj: &super::UriDecodePoolSrc,
+        event: &gst::event::CustomUpstream,
+    ) -> bool {
+        let seek = event
+            .structure()
+            .unwrap()
+            .get::<gst::Event>("seek")
+            .unwrap();
 
-            Ok(info)
-        };
+        let mut state = self.state.lock().unwrap();
+        state.nle_seek = None;
+        gst::debug!(CAT, obj: obj, "nlecomposition-seek: {:?}", seek);
+        let (rate, _flags, start_type, start, stop_type, stop) =
+            if let gst::EventView::Seek(s) = seek.view() {
+                s.get()
+            } else {
+                unreachable!();
+            };
 
-        let mut custom_query = gst::query::Custom::new(
-            gst::Structure::builder("nlecomposition-initialization-seek")
-                .field("nle-initialization-seek", None::<gst::Event>)
-                .build(),
-        );
-        gst::error!(CAT, obj: obj, "Checking for nle seek event||");
-        obj.src_pad().peer_query(custom_query.query_mut());
-
-        let mut nlecomposition_seek_data = self.nlecomposition_seek_data.lock().unwrap();
-        nlecomposition_seek_data.expect_nle_seek = true;
-        if !expecting_new_stack
-            && custom_query
-                .structure()
-                .unwrap()
-                .get::<Option<gst::Event>>("nlecomposition-initialization-seek")
-                .unwrap_or(None::<gst::Event>)
-                .is_none()
-        {
-            nlecomposition_seek_data.expect_nle_seek = false;
-            drop(nlecomposition_seek_data);
-            gst::error!(CAT, obj: obj, "Nle will not seek, not using default segment");
-
-            return return_seek_info(None, SeekInfo::None);
-        }
-
-        gst::error!(CAT, obj: obj, "Nle will seek, waiting for seek event");
-
-        nlecomposition_seek_data.waiting = true;
-        while nlecomposition_seek_data.expect_nle_seek
-            && nlecomposition_seek_data.started
-            && nlecomposition_seek_data.seek.is_none()
-        {
-            gst::error!(CAT, obj: obj, "Waiting for nle seek event");
-            nlecomposition_seek_data = self
-                .waiting_nlecomposition_seek_cond
-                .wait(nlecomposition_seek_data)
-                .unwrap();
-            gst::error!(CAT, obj: obj, "Done waiting? expected_nle_seek={:?} - started={:?}", nlecomposition_seek_data.expect_nle_seek, nlecomposition_seek_data.started);
-        }
-        nlecomposition_seek_data.waiting = false;
-
-        let seek = if let Some(seek) = nlecomposition_seek_data.seek.take() {
-            seek
-        } else {
-            drop(nlecomposition_seek_data);
-
-            gst::error!(CAT, obj: obj, "No seek event received, flushing?");
-            return return_seek_info(None, SeekInfo::None);
-        };
-        drop(nlecomposition_seek_data);
-
-        let (rate, flags, start_type, start, stop_type, stop) = seek.get();
         let (seek_start, seek_stop) = match (start, stop) {
             (gst::GenericFormattedValue::Time(start), gst::GenericFormattedValue::Time(stop)) => {
                 (start, stop)
             }
             _ => {
                 gst::error!(CAT, obj: obj, "Seeked with wrong format {seek:?}");
-                return Err(gst::FlowError::Error);
+                return false;
             }
         };
 
         if rate.abs() != 1.0 {
-            gst::error!(CAT, obj: obj, "Seeked with abs(rate) != 1.0, not using default segment");
+            gst::info!(CAT, obj: obj, "Seeked with abs(rate) != 1.0, not using default segment");
 
-            return return_seek_info(None, SeekInfo::None);
+            return false;
         }
 
         if start_type != gst::SeekType::Set || stop_type != gst::SeekType::Set {
-            gst::error!(CAT, obj: obj, "Seek type not supported, start type:{start_type:?} stop type:{stop_type:?}");
+            gst::info!(CAT, obj: obj, "Seek type not supported, start type:{start_type:?} stop type:{stop_type:?}");
 
-            return return_seek_info(None, SeekInfo::None);
+            return false;
         }
 
         if obj.reverse() {
             if rate > 0.0 {
-                gst::error!(CAT, obj: obj, "Reverse playack but got a forward seek, not using default segment");
-                return return_seek_info(None, SeekInfo::None);
+                gst::info!(CAT, obj: obj, "Reverse playack but got a forward seek, not using default segment");
+                return false;
             }
         } else if rate < 0.0 {
-            gst::error!(CAT, obj: obj, "Forward playback but got a reverse seek, not using default segment");
-            return return_seek_info(None, SeekInfo::None);
+            gst::info!(CAT, obj: obj, "Forward playback but got a reverse seek, not using default segment");
+            return false;
         }
 
-        let state = self.state.lock().unwrap();
+        let duration = obj.duration();
+        if duration.is_none() {
+            gst::error!(CAT, obj: obj, "No duration, not using NLE seek");
+            return false;
+        }
+
         if let SeekInfo::PreviousSeekDone(_, ref segment) = state.seek_info {
-            let segment = segment.downcast_ref::<gst::format::Time>().unwrap();
+            let segment = segment
+                .as_ref()
+                .expect("Only EOS to unblock composition can have an None segment")
+                .downcast_ref::<gst::format::Time>()
+                .unwrap();
             if obj.reverse() {
                 if seek_stop != segment.start() {
-                    gst::error!(CAT, obj: obj, "Reverse playback but start != previous start, not using default segment");
-                    return return_seek_info(Some(state), SeekInfo::None);
+                    gst::info!(CAT, obj: obj, "Reverse playback but start != previous start, not using default segment");
+                    return false;
                 }
             } else if seek_start != segment.stop() {
-                gst::error!(CAT, obj: obj, "Forward playback but start != previous stop, not using default segment");
-                return return_seek_info(Some(state), SeekInfo::None);
+                gst::info!(CAT, obj: obj, "Forward playback but start != previous stop, not using default segment");
+                return false;
             }
         } else {
-            let (current_start, current_stop) = (
+            let (inpoint, outpoint) = (
                 obj.inpoint().unwrap_or(gst::ClockTime::ZERO),
                 obj.inpoint().unwrap_or(gst::ClockTime::ZERO) + duration.expect("Checked before"),
             );
             if obj.reverse() {
-                if seek_stop != Some(current_stop) {
-                    gst::error!(CAT, obj: obj, "Reverse playback but stop != inpoint + duration, not using default segment");
-                    return return_seek_info(Some(state), SeekInfo::None);
+                if seek_stop != Some(outpoint) {
+                    gst::info!(CAT, obj: obj, "Reverse playback but stop != inpoint + duration, not using default segment");
+                    return false;
                 }
 
-                if seek_stop > Some(current_start) {
-                    gst::error!(CAT, obj: obj, "Reverse playback but start > inpoint, not using default segment");
-                    return return_seek_info(Some(state), SeekInfo::None);
+                if seek_stop > Some(inpoint) {
+                    gst::info!(CAT, obj: obj, "Reverse playback but start > inpoint, not using default segment");
+                    return false;
                 }
-            } else if seek_start != Some(current_start) {
-                gst::error!(CAT, obj: obj, "seek_start({seek_start:?}) != current_start({current_start:?}), not using default segment");
-                return return_seek_info(Some(state), SeekInfo::None);
+            } else if seek_start != Some(inpoint) {
+                gst::info!(CAT, obj: obj, "seek_start({seek_start:?}) != inpoint({inpoint:?}), not using default segment");
+                return false;
             }
         }
-        drop(state);
+        state.nle_seek = Some(seek.clone());
 
-        let mut segment = gst::FormattedSegment::<gst::ClockTime>::new().upcast();
-        segment.do_seek(rate, flags, start_type, seek_start, stop_type, seek_stop);
-
-        gst::error!(CAT, obj: obj, "Sending seek to baseclass {:?}", seek.event());
-        obj.imp().send_seek(seek.event().to_owned());
-        gst::error!(CAT, obj: obj, "====> Sending segment {segment:?}");
-
-        return_seek_info(None, SeekInfo::SeekSegment(seek.seqnum(), segment))
+        true
     }
 
     pub(crate) fn handle_seek(
@@ -422,66 +379,87 @@ impl SeekHandler {
         obj: &super::UriDecodePoolSrc,
         seek: &gst::event::Seek,
     ) -> bool {
-        gst::error!(CAT, obj: obj, "I HAVE BEEN BUILT!! ====> Handling seek {seek:#?}");
+        let seek_event = seek.event().to_owned();
+        let mut state = self.state.lock().unwrap();
+        let nle_seek = state.nle_seek.clone();
 
-        let (rate, flags, start_type, start, stop_type, stop) = seek.get();
-        let mut nlecomposition_seek_data = self.nlecomposition_seek_data.lock().unwrap();
-        if nlecomposition_seek_data.expect_nle_seek {
-            gst::error!(CAT, "Was maybe expecting a seek");
-            if let SeekInfo::PreviousSeekDone(_, ref segment) = self.state.lock().unwrap().seek_info
-            {
-                gst::error!(CAT, "Previous segment {:#?} - seek {:#?}", segment, seek);
-                if rate != if obj.reverse() { -1.0 } else { 1.0 } {
-                    nlecomposition_seek_data.expect_nle_seek = false;
-                }
-
-                if start_type != gst::SeekType::Set || stop_type != gst::SeekType::Set {
-                    nlecomposition_seek_data.expect_nle_seek = false;
-                }
-
-                if rate >= 1.0 && start != segment.stop() || rate <= -1.0 && stop != segment.start()
-                {
-                    nlecomposition_seek_data.expect_nle_seek = false;
-                }
-            }
-
-            if !nlecomposition_seek_data.expect_nle_seek {
-                gst::error!(CAT, obj: obj, "Expected seek doesn't match received one: expected_nle_seek={:?} - resetting seek_info", nlecomposition_seek_data.expect_nle_seek);
-                self.state.lock().unwrap().seek_info = SeekInfo::None;
-                self.waiting_nlecomposition_seek_cond.notify_all();
-            }
-        }
-
-        if !nlecomposition_seek_data.expect_nle_seek {
-            // In case of invalid seeks
-            drop(nlecomposition_seek_data);
-
-            gst::error!(CAT, obj: obj, "====> Not expecting nlecomposition seek, let source handle the seek  'normally' and reset");
-            if flags.contains(gst::SeekFlags::FLUSH) {
-                gst::error!(CAT, obj: obj, "====> Flushing seek, reseting");
-                self.reset();
-            }
+        if nle_seek.is_none() || state.handled_composition_seek {
+            gst::info!(CAT, obj: obj, "Not expecting any NLE seek");
             return false;
         }
-        gst::error!(CAT, "====> Waiting for seek, sending seek to the waiter.");
 
-        nlecomposition_seek_data.seek = Some(seek.to_owned());
-        nlecomposition_seek_data.expect_nle_seek = false;
-        self.waiting_nlecomposition_seek_cond.notify_all();
-
-        gst::log!(CAT, obj: obj, "Waiting seek to be consumed");
-        while nlecomposition_seek_data.seek.is_some() && nlecomposition_seek_data.started {
-            nlecomposition_seek_data = self
-                .consumed_nlecomposition_seek_cond
-                .wait(nlecomposition_seek_data)
-                .unwrap();
+        if seek_event.seqnum() != nle_seek.as_ref().unwrap().seqnum() {
+            gst::info!(CAT, obj: obj, "Not the expected NLE seek??");
+            gst::info!(CAT, obj: obj, "expected: {:?} != {:?}",
+                nle_seek.as_ref().map(|s| s.seqnum()),
+                seek_event.seqnum());
+            return false;
         }
-        drop(nlecomposition_seek_data);
 
-        let state = self.state.lock().unwrap();
-        gst::error!(CAT, obj: obj, "Done waiting for seek to be consumed, current seek_info={:?}", state.seek_info);
+        let src_pad = obj.src_pad();
+        if let Some(probe_id) = state.probe_id.take() {
+            gst::debug!(CAT, obj: obj, "Removed PROBE {probe_id:?}");
+            src_pad.remove_probe(probe_id);
+            state.probe_id = None;
+            state.pad_probe.set(None);
+        }
 
-        !matches!(&state.seek_info, SeekInfo::None)
+        state.pad_probe.set(Some(src_pad));
+        state.probe_id = src_pad.add_probe(
+            gst::PadProbeType::EVENT_FLUSH,
+            glib::clone!(@weak obj, @strong seek_event => @default-return gst::PadProbeReturn::Remove, move |_pad, probe_info| {
+                obj.imp().decoderpipe().unwrap().seek_handler().handle_flush_event_probe(&obj, probe_info, &seek_event)
+            }),
+        );
+        drop(state);
+
+        obj.imp().send_seek(seek.event().to_owned());
+
+        true
+    }
+
+    fn handle_flush_event_probe(
+        &self,
+        obj: &super::UriDecodePoolSrc,
+        probe_info: &gst::PadProbeInfo,
+        seek_event: &gst::Event,
+    ) -> gst::PadProbeReturn {
+        if let Some(gst::PadProbeData::Event(ref event)) = probe_info.data {
+            if let gst::EventView::FlushStop(flush) = event.view() {
+                let mut state = self.state.lock().unwrap();
+                if flush.seqnum() == seek_event.seqnum() {
+                    gst::log!(CAT, obj: obj, "forwarded {} seek {:?}", self.name, state.seek_info);
+                    state.handled_composition_seek = true;
+
+                    let (rate, flags, start_type, start, stop_type, stop) =
+                        if let gst::EventView::Seek(s) = seek_event.view() {
+                            s.get()
+                        } else {
+                            unreachable!();
+                        };
+                    let mut segment = gst::FormattedSegment::<gst::ClockTime>::new().upcast();
+                    segment.do_seek(rate, flags, start_type, start, stop_type, stop);
+
+                    if !matches!(state.seek_info, SeekInfo::PreviousSeekDone(_, _)) {
+                        state.seek_info = SeekInfo::SeekSegment(seek_event.seqnum(), segment);
+                    }
+                    gst::debug!(CAT, obj: obj, "Setting {} seek_info: {:?}", self.name, state.seek_info);
+                } else {
+                    gst::info!(
+                        CAT,
+                        obj: obj,
+                        "Dropping NLE seek info after flushing - expected {:?}, got {:?}",
+                        seek_event.seqnum(),
+                        flush.seqnum()
+                    );
+                    state.handled_composition_seek = false;
+                    state.nle_seek = None;
+                    state.seek_info = SeekInfo::None;
+                }
+            }
+        }
+
+        gst::PadProbeReturn::Ok
     }
 
     pub(crate) fn handle_sample(&self, sample: &gst::Sample) -> Option<gst::Buffer> {
