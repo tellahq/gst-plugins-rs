@@ -689,7 +689,7 @@ impl UriDecodePoolSrc {
 
             if let Some(seqnum) = state.segment_seqnum.as_ref() {
                 builder = builder.seqnum(*seqnum);
-                gst::error!(CAT, imp: self, "Setting segment seqnum: {seqnum:?}");
+                gst::log!(CAT, imp: self, "Setting segment seqnum: {seqnum:?}");
             }
 
             state.needs_segment = false;
@@ -804,7 +804,7 @@ impl ObjectImpl for UriDecodePoolSrc {
 
                 match event.view() {
                     gst::EventView::FlushStart(_) | gst::EventView::FlushStop(_) => {
-                        gst::error!(CAT, imp: this, "Got flush {event:?}");
+                        gst::info!(CAT, imp: this, "Got flush {event:?}");
                         return gst::PadProbeReturn::Ok
                     }
                     gst::EventView::StreamStart(s) => this.stream_start_probe(probe_info, s),
