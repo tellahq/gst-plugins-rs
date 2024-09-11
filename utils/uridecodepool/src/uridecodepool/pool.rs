@@ -257,7 +257,7 @@ impl UriDecodePool {
                 src.name(),
                 src.uri(),
                 src.stream_id(),
-                pipeline.state(gst::ClockTime::NONE)
+                pipeline.state(gst::ClockTime::ZERO)
             );
 
             (pipe, self.state.lock().unwrap())
