@@ -198,11 +198,23 @@ impl DecoderPipeline {
             let videorate_sinkpad = videorate.static_pad("sink").unwrap();
             if let Err(err) = pad.link(&videorate_sinkpad) {
                 gst::error!(CAT, imp: self, "Failed to link pads: {:?}", err);
+                gst::error!(CAT, imp: self, "Failed link pads {:?}:{:?}: {:#?}\n -> {:?}:{}: {:#?} \n: {:?}",
+                    pad.parent().map(|p| p.name()), pad.name(),
+                    pad.query_caps(None),
+                    sinkpad.parent().map(|p| p.name()), sinkpad.name(),
+                    sinkpad.query_caps(None),
+                    err);
             }
 
             let pad = videorate.static_pad("src").unwrap();
             if let Err(err) = pad.link(&sinkpad) {
                 gst::error!(CAT, imp: self, "Failed to link pads: {:?}", err);
+                gst::error!(CAT, imp: self, "Failed link pads {:?}:{:?}: {:#?}\n -> {:?}:{}: {:#?} \n: {:?}",
+                    pad.parent().map(|p| p.name()), pad.name(),
+                    pad.query_caps(None),
+                    sinkpad.parent().map(|p| p.name()), sinkpad.name(),
+                    sinkpad.query_caps(None),
+                    err);
             }
 
             return;
@@ -431,6 +443,11 @@ impl DecoderPipeline {
                         break;
                     }
                 }
+
+                // if self.state.lock().unwrap().pending_seek.as_ref().is_some() {
+                //     // We got a StreamCollection, we should be ready to seek now!
+                //     self.seek_in_thread();
+                // }
             }
             gst::MessageView::NeedContext(..)
             | gst::MessageView::HaveContext(..)
@@ -460,37 +477,41 @@ impl DecoderPipeline {
                     && s.current() == gst::State::Playing
                     && self.state.lock().unwrap().pending_seek.as_ref().is_some()
                 {
-                    let pipeline = self.pipeline();
-
-                    gst::debug!(CAT, obj: self.pipeline, "Pipeline reached Playing state, scheduling sending pending seek event");
-
-                    // Send seek from some other thread to avoid deadlocks
-                    pipeline.call_async(glib::clone!(@weak self as this => move |pipeline| {
-                        let mut state = this.state.lock().unwrap();
-
-                        let seek_event = if let Some(seek_event) = state.pending_seek.take() {
-                            seek_event
-                        } else {
-                            gst::error!(CAT, obj: pipeline, "--> No pending seek");
-                            return;
-                        };
-
-                        gst::info!(CAT, obj: pipeline, "--> Sending pending seek {:?}", seek_event);
-                        drop(state);
-
-                        if !pipeline.send_event(seek_event) {
-                            if let Err(e) = pipeline.post_message(gst::message::Error::new(
-                                gst::CoreError::Failed,
-                                "Failed to seek",
-                            )) {
-                                gst::error!(CAT, obj: this.pipeline, "Failed to post error message: {e:?}");
-                            }
-                        }
-                    }));
+                    self.seek_in_thread();
                 }
             }
             _ => (),
         }
+    }
+
+    fn seek_in_thread(&self) {
+        let pipeline = self.pipeline();
+
+        gst::debug!(CAT, obj: self.pipeline, "Pipeline got STREAMN_SELECTION... pushing seek!");
+
+        // Send seek from some other thread to avoid deadlocks
+        pipeline.call_async(glib::clone!(@weak self as this => move |pipeline| {
+            let mut state = this.state.lock().unwrap();
+
+            let seek_event = if let Some(seek_event) = state.pending_seek.take() {
+                seek_event
+            } else {
+                gst::error!(CAT, obj: pipeline, "--> No pending seek");
+                return;
+            };
+
+            gst::error!(CAT, obj: pipeline, "--> Sending pending seek {:?}", seek_event);
+            drop(state);
+
+            if !pipeline.send_event(seek_event) {
+                if let Err(e) = pipeline.post_message(gst::message::Error::new(
+                    gst::CoreError::Failed,
+                    "Failed to seek",
+                )) {
+                    gst::error!(CAT, obj: this.pipeline, "Failed to post error message: {e:?}");
+                }
+            }
+        }));
     }
 
     pub(crate) fn unused_since(&self) -> Option<std::time::Instant> {
@@ -513,7 +534,6 @@ impl DecoderPipeline {
         gst::debug!(CAT, obj: self.pipeline, "Starting pipeline");
 
         self.tearing_down.store(false, Ordering::SeqCst);
-        let _state_lock = self.state_lock.lock();
         if self.pipeline.state(None).1 < gst::State::Paused {
             if let Some(seek_event) = self.initial_seek() {
                 gst::debug!(CAT, obj: self.pipeline, "Using initial seek as pending_seek: {:?}", seek_event);

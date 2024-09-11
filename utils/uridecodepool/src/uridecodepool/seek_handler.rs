@@ -294,6 +294,7 @@ impl SeekHandler {
                 .field("nle-initialization-seek", None::<gst::Event>)
                 .build(),
         );
+        gst::error!(CAT, obj: obj, "Checking for nle seek event||");
         obj.src_pad().peer_query(custom_query.query_mut());
 
         let mut nlecomposition_seek_data = self.nlecomposition_seek_data.lock().unwrap();
@@ -421,7 +422,7 @@ impl SeekHandler {
         obj: &super::UriDecodePoolSrc,
         seek: &gst::event::Seek,
     ) -> bool {
-        gst::error!(CAT, obj: obj, "====> Handling seek {seek:#?}");
+        gst::error!(CAT, obj: obj, "I HAVE BEEN BUILT!! ====> Handling seek {seek:#?}");
 
         let (rate, flags, start_type, start, stop_type, stop) = seek.get();
         let mut nlecomposition_seek_data = self.nlecomposition_seek_data.lock().unwrap();
