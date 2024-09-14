@@ -183,19 +183,15 @@ impl DecoderPipeline {
         }
 
         if self.stream_type() == gst::StreamType::VIDEO {
-            let videorate = gst::parse::bin_from_description(
-                "videorate ! capsfilter caps=\"video/x-raw,framerate=30/1\"",
-                true,
-            )
-            .unwrap();
-            if let Err(err) = self.pipeline().add(&videorate) {
-                gst::error!(CAT, imp: self, "Failed to add videorate: {:?}", err);
+            let clipper = gst::parse::bin_from_description("segmentclipper", true).unwrap();
+            if let Err(err) = self.pipeline().add(&clipper) {
+                gst::error!(CAT, imp: self, "Failed to add clipper: {:?}", err);
                 return;
             }
 
-            videorate.sync_state_with_parent().unwrap();
+            clipper.sync_state_with_parent().unwrap();
 
-            let videorate_sinkpad = videorate.static_pad("sink").unwrap();
+            let videorate_sinkpad = clipper.static_pad("sink").unwrap();
             if let Err(err) = pad.link(&videorate_sinkpad) {
                 gst::error!(CAT, imp: self, "Failed to link pads: {:?}", err);
                 gst::error!(CAT, imp: self, "Failed link pads {:?}:{:?}: {:#?}\n -> {:?}:{}: {:#?} \n: {:?}",
@@ -206,7 +202,7 @@ impl DecoderPipeline {
                     err);
             }
 
-            let pad = videorate.static_pad("src").unwrap();
+            let pad = clipper.static_pad("src").unwrap();
             if let Err(err) = pad.link(&sinkpad) {
                 gst::error!(CAT, imp: self, "Failed to link pads: {:?}", err);
                 gst::error!(CAT, imp: self, "Failed link pads {:?}:{:?}: {:#?}\n -> {:?}:{}: {:#?} \n: {:?}",
