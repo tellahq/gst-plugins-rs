@@ -229,7 +229,7 @@ impl SeekHandler {
         &self,
         obj: &super::UriDecodePoolSrc,
         sample: &gst::Sample,
-    ) -> Result<SeekInfo, gst::FlowError> {
+    ) -> Result<SeekInfo, (gst::FlowError, Option<gst::Seqnum>)> {
         let mut state = self.state.lock().unwrap();
 
         gst::log!(CAT, obj: obj, "nle_seek: {:?} -- handled? {:?}", state.nle_seek, state.handled_composition_seek);
@@ -245,7 +245,7 @@ impl SeekHandler {
                 }
             }
 
-            return Err(gst::FlowError::Eos);
+            return Err((gst::FlowError::Eos, None));
         }
 
         if matches!(state.seek_info, SeekInfo::PreviousSeekDone(_, _)) {
@@ -268,9 +268,12 @@ impl SeekHandler {
         }
 
         let res = state.seek_info.clone();
+        let seqnum = state.nle_seek.as_ref().map(|s| s.seqnum());
         drop(state);
 
-        self.check_eos(obj, sample)?;
+        if let Err(gst::FlowError::Eos) = self.check_eos(obj, sample) {
+            return Err((gst::FlowError::Eos, seqnum));
+        }
 
         Ok(res)
     }

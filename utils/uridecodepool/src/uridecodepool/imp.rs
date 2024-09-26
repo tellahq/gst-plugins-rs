@@ -720,6 +720,36 @@ impl UriDecodePoolSrc {
                 }
             })
     }
+
+    fn push_segment(
+        &self,
+        segment: Option<gst::FormattedSegment<gst::GenericFormattedValue>>,
+    ) -> Result<(), gst::FlowError> {
+        if let Some(segment) = segment {
+            let seg = match segment.downcast_ref::<gst::format::Time>() {
+                Some(seg) => seg.clone(),
+                None => {
+                    gst::element_imp_error!(
+                        self,
+                        gst::StreamError::Failed,
+                        ["Time segment needed"]
+                    );
+                    return Err(gst::FlowError::Error);
+                }
+            };
+
+            let mut state = self.state.lock().unwrap();
+            if Some(seg.clone()).as_ref() != state.current_segment.as_ref() {
+                state.current_segment = Some(seg);
+                drop(state);
+
+                gst::debug!(CAT, imp: self, "Pushing segment: {segment:?}");
+                self.obj().push_segment(segment.upcast_ref());
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[glib::object_subclass]
@@ -1082,7 +1112,7 @@ impl BaseSrcImpl for UriDecodePoolSrc {
 
         // If we are inside nlecomposition, we need to use the sample that triggered the fake EOS
         // and set the caps from it.
-        let (sample, caps_to_set) = if let Some(sample) =
+        let (sample, eos_sample_caps_to_set) = if let Some(sample) =
             pipeline.seek_handler().get_eos_sample(&self.obj())?
         {
             if let Some(caps) = sample
@@ -1104,47 +1134,51 @@ impl BaseSrcImpl for UriDecodePoolSrc {
             )
         };
 
-        let segment = match pipeline.seek_handler().process(&self.obj(), &sample)? {
-            SeekInfo::SeekSegment(seqnum, segment) => {
+        let segment = match pipeline.seek_handler().process(&self.obj(), &sample) {
+            Ok(SeekInfo::SeekSegment(seqnum, segment)) => {
                 gst::log!(CAT, imp: self, "Got seek segment after process --> new seqnum: {seqnum:?} -- {:?}",  self.state.lock().unwrap().seek_seqnum);
                 self.state.lock().unwrap().segment_seqnum = Some(seqnum);
 
                 Some(segment)
             }
-            SeekInfo::None => {
+            Ok(SeekInfo::None) => {
                 gst::debug!(CAT, imp: self, "Using sample segment: {:?}", sample.segment());
                 sample.segment().cloned()
+            }
+            Err((gst::FlowError::Eos, Some(seqnum))) => {
+                self.state.lock().unwrap().segment_seqnum = Some(seqnum);
+                if eos_sample_caps_to_set.is_none() {
+                    return Err(gst::FlowError::Eos);
+                }
+
+                gst::info!(
+                    CAT,
+                    "We got an EOS sample right after getting an EOS sample from previous run
+                     pushing segment to ensure seqnum is propagated"
+                );
+                self.state.lock().unwrap().segment_seqnum = Some(seqnum);
+
+                if let Err(e) = self.set_caps(eos_sample_caps_to_set.unwrap()) {
+                    gst::error!(CAT, imp: self, "Failed to push caps: {:?}", e);
+                }
+
+                if let Err(e) = self.push_segment(sample.segment().cloned()) {
+                    gst::error!(CAT, imp: self, "Failed to push segment: {:?}", e);
+                }
+                return Err(gst::FlowError::Eos);
+            }
+            Err((e, _)) => {
+                return Err(e);
             }
             _ => unreachable!(),
         };
 
-        if let Some(caps) = caps_to_set {
+        if let Some(caps) = eos_sample_caps_to_set {
             gst::debug!(CAT, imp: self, "Setting caps: {:?}", caps);
             self.set_caps(caps)?;
         }
 
-        if let Some(segment) = segment {
-            let seg = match segment.downcast_ref::<gst::format::Time>() {
-                Some(seg) => seg.clone(),
-                None => {
-                    gst::element_imp_error!(
-                        self,
-                        gst::StreamError::Failed,
-                        ["Time segment needed"]
-                    );
-                    return Err(gst::FlowError::Error);
-                }
-            };
-
-            let mut state = self.state.lock().unwrap();
-            if Some(seg.clone()).as_ref() != state.current_segment.as_ref() {
-                state.current_segment = Some(seg);
-                drop(state);
-
-                gst::debug!(CAT, imp: self, "Pushing segment: {segment:?}");
-                self.obj().push_segment(segment.upcast_ref());
-            }
-        }
+        self.push_segment(segment)?;
 
         if let Some(buffer) = pipeline.seek_handler().handle_sample(&sample) {
             Ok(gst_base::subclass::base_src::CreateSuccess::NewBuffer(
@@ -1236,3 +1270,4 @@ impl ChildProxyImpl for UriDecodePoolSrc {
         }
     }
 }
+
