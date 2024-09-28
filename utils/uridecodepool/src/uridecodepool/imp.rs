@@ -240,6 +240,34 @@ impl UriDecodePoolSrc {
     }
 
     pub(crate) fn initial_seek_event(&self) -> Option<gst::Event> {
+        if let Some(seek_event) = self
+            .obj()
+            .emit_by_name::<Option<gst::Event>>("get-initial-seek", &[])
+        {
+            if let gst::EventView::Seek(s) = seek_event.view() {
+                let mut settings = self.settings.lock().unwrap();
+                let (rate, flags, start_type, start, stop_type, stop) = s.get();
+
+                if let gst::GenericFormattedValue::Time(start) = start {
+                    settings.inpoint = Some(start.expect("Start value is mandatory in the seek"));
+                    if let gst::GenericFormattedValue::Time(stop) = stop {
+                        if let Some(stop) = stop {
+                            settings.duration = Some(stop - start.unwrap());
+                        } else {
+                            settings.duration = None;
+                        }
+                    }
+                } else {
+                    unreachable!("Unsupported start type: {:?}", start_type);
+                }
+                settings.reverse = if rate < 0.0 { true } else { false };
+            } else {
+                unreachable!();
+            }
+
+            return Some(seek_event);
+        }
+
         let settings = self.settings.lock().unwrap();
 
         if let Some(inpoint) = settings.inpoint {
@@ -794,6 +822,9 @@ impl ObjectImpl for UriDecodePoolSrc {
                  */
                 glib::subclass::Signal::builder("source-setup")
                     .param_types([gst::Element::static_type()])
+                    .build(),
+                glib::subclass::Signal::builder("get-initial-seek")
+                    .return_type::<Option<gst::Event>>()
                     .build(),
             ]
         });
