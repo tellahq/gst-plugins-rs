@@ -62,6 +62,10 @@ impl DecoderPipeline {
         self.imp().uridecodebin()
     }
 
+    pub(crate) fn name(&self) -> &str {
+        &self.imp().name
+    }
+
     pub(crate) fn new(
         uri: &str,
         caps: &gst::Caps,

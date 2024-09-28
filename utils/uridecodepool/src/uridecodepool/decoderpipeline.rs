@@ -48,7 +48,7 @@ pub struct DecoderPipeline {
     state_lock: ReentrantMutex<bool>,
     tearing_down: AtomicBool,
 
-    name: String,
+    pub(crate) name: String,
 
     pub(crate) seek_handler: SeekHandler,
 }
@@ -534,6 +534,20 @@ impl DecoderPipeline {
     }
 
     pub(crate) fn play(&self) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
+        if self
+            .state
+            .lock()
+            .unwrap()
+            .pool
+            .as_ref()
+            .unwrap()
+            .imp()
+            .deinitialized()
+        {
+            gst::error!(CAT, "Pool is already deinitialized");
+            return Err(gst::StateChangeError);
+        }
+
         gst::debug!(CAT, obj: self.pipeline, "Starting pipeline");
 
         self.tearing_down.store(false, Ordering::SeqCst);
