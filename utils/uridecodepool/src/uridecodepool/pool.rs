@@ -2,7 +2,10 @@
 
 use std::{
     collections::HashMap,
-    sync::{Condvar, Mutex, MutexGuard},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Condvar, Mutex, MutexGuard,
+    },
 };
 
 use gst::{
@@ -51,24 +54,24 @@ impl Default for Settings {
 
 #[derive(Debug, Default)]
 struct State {
-    running_pipelines: Vec<DecoderPipeline>,
-    unused_pipelines: Vec<DecoderPipeline>,
-    prepared_pipelines: Vec<DecoderPipeline>,
+    // Running pipelines
+    running: Vec<DecoderPipeline>,
+    // Pipelines that have been released to the pool and can be reused
+    pooled: Vec<DecoderPipeline>,
+    // Pipelines prepared by the application for specific source
+    prepared: Vec<DecoderPipeline>,
     defered_release_tasks: HashMap<DecoderPipeline, std::time::Instant>,
-}
-
-#[derive(Debug, Default)]
-struct Outstandings {
-    n: Mutex<u32>,
-    cond: Condvar,
 }
 
 #[derive(Properties, Debug, Default)]
 #[properties(wrapper_type = super::UriDecodePool)]
 pub struct UriDecodePool {
     state: Mutex<State>,
-    // Number of pipelines in used */
-    outstandings: Outstandings,
+    deinitialized: AtomicBool,
+
+    // All pipelines
+    pipelines: Mutex<Vec<DecoderPipeline>>,
+    pipelines_cond: Condvar,
 
     #[property(name="cleanup-timeout",
         get = |s: &Self| s.settings.lock().unwrap().cleanup_timeout.as_secs(),
@@ -153,31 +156,49 @@ impl UriDecodePool {
         self.cleanup();
     }
 
+    pub(crate) fn deinitialized(&self) -> bool {
+        self.deinitialized.load(Ordering::SeqCst)
+    }
+
     fn deinit(&self) {
-        gst::error!(CAT, "Deinitializing pool");
+        gst::info!(CAT, "Deinitializing pool");
         self.set_cleanup_timeout(0);
 
         let obj = self.obj();
-        let mut state = self.state.lock().unwrap();
-        while let Some(pipeline) = state.prepared_pipelines.pop() {
-            drop(state);
+        self.deinitialized.store(true, Ordering::SeqCst);
 
-            if let Some(src) = pipeline.imp().target_src() {
+        let all_pipelines = self.pipelines.lock().unwrap().clone();
+        for pipeline in all_pipelines.into_iter() {
+            let imp = pipeline.imp();
+
+            if let Some(src) = imp.target_src() {
                 obj.emit_by_name::<()>("prepared-pipeline-removed", &[&src]);
             }
-            if let Err(err) = pipeline.imp().release() {
+            if let Err(err) = imp.release() {
                 gst::error!(CAT, "Failed to release pipeline: {}", err);
             }
-
-            state = self.state.lock().unwrap();
         }
-        drop(state);
 
-        let mut outstandings = self.outstandings.n.lock().unwrap();
-        while *outstandings > 0 {
-            outstandings = self.outstandings.cond.wait(outstandings).unwrap();
+        let mut pipelines = self.pipelines.lock().unwrap();
+        gst::log!(
+            CAT,
+            "Outstandings: {:?}",
+            pipelines.iter().map(|p| p.name()).collect::<Vec<_>>()
+        );
+        while pipelines.len() > 0 {
+            pipelines = self.pipelines_cond.wait(pipelines).unwrap();
+            gst::log!(
+                CAT,
+                "Outstandings: {:?}",
+                pipelines.iter().map(|p| p.name()).collect::<Vec<_>>()
+            );
         }
-        gst::error!(CAT, "Done deinitializaing");
+        gst::log!(
+            CAT,
+            "YAY: Outstandings: {:?}",
+            pipelines.iter().map(|p| p.name()).collect::<Vec<_>>()
+        );
+        gst::info!(CAT, "Done deinitializaing");
     }
 
     fn unprepare_pipeline(&self, src: &super::UriDecodePoolSrc) -> bool {
@@ -185,10 +206,10 @@ impl UriDecodePool {
 
         let mut state = self.state.lock().unwrap();
 
-        if let Some(position) = state.prepared_pipelines.iter().position(|p| {
+        if let Some(position) = state.prepared.iter().position(|p| {
             p.imp().target_src().as_ref() == Some(src) && !p.seek_handler().has_eos_sample()
         }) {
-            let pipeline = state.prepared_pipelines.remove(position);
+            let pipeline = state.prepared.remove(position);
             drop(state);
 
             self.obj().emit_by_name::<()>(
@@ -212,7 +233,7 @@ impl UriDecodePool {
         let mut state = self.state.lock().unwrap();
 
         if state
-            .prepared_pipelines
+            .prepared
             .iter()
             .any(|p| p.imp().target_src().as_ref() == Some(src))
         {
@@ -226,28 +247,18 @@ impl UriDecodePool {
             return false;
         }
 
-        if state
-            .running_pipelines
-            .iter()
-            .any(|p| p.imp().target_src().is_none())
-        {
-            gst::debug!(
-                CAT,
-                "We already have a running pipeline already for {}:{:?}",
-                src.name(),
-                src as *const _
-            );
-            return false;
-        }
-
         let decoderpipe = self.get_unused_or_create_pipeline(src, &mut state);
         gst::debug!(CAT, imp: self, "Starting {decoderpipe:?}");
         if let Err(err) = decoderpipe.imp().play() {
             gst::warning!(CAT, imp: self, "Failed to play pipeline: {}", err);
+            if let Err(e) = decoderpipe.imp().release() {
+                gst::error!(CAT, imp: self, "Failed to release pipeline: {}", e);
+            }
+
             return false;
         }
 
-        state.prepared_pipelines.push(decoderpipe);
+        state.prepared.push(decoderpipe);
 
         true
     }
@@ -257,11 +268,11 @@ impl UriDecodePool {
         let mut state = self.state.lock().unwrap();
 
         let (decoderpipe, mut state) = if let Some(position) = state
-            .prepared_pipelines
+            .prepared
             .iter()
             .position(|p| p.imp().target_src().as_ref() == Some(src))
         {
-            let pipe = state.prepared_pipelines.remove(position);
+            let pipe = state.prepared.remove(position);
             drop(state);
 
             self.obj()
@@ -288,7 +299,7 @@ impl UriDecodePool {
             (self.get_unused_or_create_pipeline(src, &mut state), state)
         };
 
-        state.running_pipelines.push(decoderpipe.clone());
+        state.running.push(decoderpipe.clone());
 
         decoderpipe
     }
@@ -303,7 +314,7 @@ impl UriDecodePool {
         let stream_id = src.stream_id();
         let seek = src.imp().initial_seek_event();
 
-        let decoderpipe = if let Some(position) = state.unused_pipelines.iter().position(|p| {
+        let decoderpipe = if let Some(position) = state.pooled.iter().position(|p| {
             stream_id.is_some()
                 && !p.seek_handler().has_eos_sample()
                 && p.requested_stream_id()
@@ -311,8 +322,8 @@ impl UriDecodePool {
                 && false
         }) {
             gst::debug!(CAT, "Reusing the exact same pipeline for {:?}", stream_id);
-            Some(state.unused_pipelines.remove(position))
-        } else if let Some(position) = state.unused_pipelines.iter().position(|p| {
+            Some(state.pooled.remove(position))
+        } else if let Some(position) = state.pooled.iter().position(|p| {
             let initial_seek = p.imp().initial_seek();
 
             if initial_seek.is_some() && seek.is_none() {
@@ -334,7 +345,7 @@ impl UriDecodePool {
                 won't allow use to switch stream-id for different media types yet"
             );
 
-            Some(state.unused_pipelines.remove(position))
+            Some(state.pooled.remove(position))
         } else {
             None
         };
@@ -356,10 +367,6 @@ impl UriDecodePool {
                     pipeline.pipeline().name()
                 );
                 let obj = self.obj();
-                let mut outstandings = self.outstandings.n.lock().unwrap();
-                let prev = *outstandings;
-                *outstandings = prev + 1u32;
-                self.outstandings.cond.notify_one();
 
                 // Make sure the pipeline is returned to the pool once it is ready to be reused
                 pipeline.connect_closure(
@@ -384,6 +391,9 @@ impl UriDecodePool {
 
                 obj.emit_by_name::<()>("new-pipeline", &[&pipeline.pipeline()]);
 
+                let mut all_pipelines = self.pipelines.lock().unwrap();
+                all_pipelines.insert(0, pipeline.clone());
+                self.pipelines_cond.notify_one();
                 pipeline
             },
             |decoderpipe| {
@@ -403,13 +413,14 @@ impl UriDecodePool {
         gst::log!(CAT, imp: self, "{} released.", pipeline.pipeline().name());
 
         let mut state = self.state.lock().unwrap();
-        if state.unused_pipelines.contains(&pipeline) {
-            unreachable!(
-                "Released {} which was already marked asunused, that should not happen",
+        if state.pooled.contains(&pipeline) {
+            gst::debug!(
+                CAT,
+                "Released {} which was already marked as unused",
                 pipeline.pipeline().name()
             );
         } else {
-            state.unused_pipelines.insert(0, pipeline);
+            state.pooled.insert(0, pipeline);
         }
 
         let cleanup_timeout = self.settings.lock().unwrap().cleanup_timeout;
@@ -428,21 +439,25 @@ impl UriDecodePool {
     fn pipeline_stopped_cb(&self, pipeline: DecoderPipeline) {
         gst::log!(CAT, imp: self, "{} not used stopped.", pipeline.pipeline().name());
 
-        let mut outstandings = self.outstandings.n.lock().unwrap();
-        *outstandings -= 1u32;
-        self.outstandings.cond.notify_one();
+        let mut all_pipelines = self.pipelines.lock().unwrap();
+        all_pipelines.retain(|p| p != &pipeline);
+        gst::log!(
+            CAT,
+            "{} => {:?} outstanding pipelines",
+            pipeline.name(),
+            *all_pipelines
+        );
+        self.pipelines_cond.notify_one();
     }
 
     fn cleanup(&self) {
         let mut state = self.state.lock().unwrap();
 
         let mut cleaned_up = Vec::new();
-        state.unused_pipelines.retain(|p| {
+        state.pooled.retain(|p| {
             if p.imp()
                 .unused_since()
-                .expect(
-                    "Pipeline without unused_since set shouldn't be in the unused_pipelines list",
-                )
+                .expect("Pipeline without unused_since set shouldn't be in the pooled list")
                 .elapsed()
                 > self.settings.lock().unwrap().cleanup_timeout
             {
@@ -462,7 +477,7 @@ impl UriDecodePool {
     pub(crate) fn release(&self, pipeline: DecoderPipeline) {
         let mut state = self.state.lock().unwrap();
 
-        state.running_pipelines.retain(|p| p != &pipeline);
+        state.running.retain(|p| p != &pipeline);
 
         let pipeline_imp = pipeline.imp();
         if pipeline_imp.seek_handler.has_eos_sample() {
@@ -473,7 +488,7 @@ impl UriDecodePool {
                 cleanup_timeout = std::time::Duration::from_secs(1);
             }
             // Let it be reused asap
-            state.prepared_pipelines.insert(0, pipeline.clone());
+            state.prepared.insert(0, pipeline.clone());
             let now = std::time::Instant::now();
             state.defered_release_tasks.insert(pipeline.clone(), now);
 
@@ -496,8 +511,12 @@ impl UriDecodePool {
                         return;
                     }
 
-                    if pipeline.imp().target_src().is_none() {
+                    if pipeline.imp().target_src().is_none() || this.deinitialized.load(Ordering::SeqCst) {
                         gst::info!(CAT, "Releasing pipeline {}", pipeline.pipeline().name());
+                        if let Some(src) = pipeline.imp().target_src() {
+                            this.obj().emit_by_name::<()>("prepared-pipeline-removed", &[&src]);
+                        }
+
                         if let Err(e) = pipeline.imp().release() {
                             gst::error!(CAT, imp: this, "Failed to release pipeline: {e:?}");
                         }
