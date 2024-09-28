@@ -89,6 +89,7 @@ pub struct UriDecodePoolSrc {
         type = Option<String>,
         blurb = "Generate a dot file of the underlying pipeline and return its file path")
     ]
+    #[property(name="pipeline", get = Self::pipeline, type = Option<gst::Pipeline>, blurb = "The underlying pipeline in use")]
     state: Mutex<State>,
     start_completed: Mutex<bool>,
 
@@ -183,6 +184,15 @@ impl UriDecodePoolSrc {
         self.state.lock().unwrap().ignore_seek = true;
         self.obj().send_event(seek);
         self.state.lock().unwrap().ignore_seek = false;
+    }
+
+    fn pipeline(&self) -> Option<gst::Pipeline> {
+        self.state
+            .lock()
+            .unwrap()
+            .decoderpipe
+            .as_ref()
+            .map(|pipe| pipe.pipeline())
     }
 
     fn dot_pipeline(&self) -> Option<String> {
@@ -603,6 +613,9 @@ impl UriDecodePoolSrc {
 
         state.needs_segment = true;
         state.decoderpipe = Some(decoderpipe.clone());
+        drop(state);
+
+        self.obj().notify("pipeline");
     }
 
     fn get_appsink_caps(&self) -> Option<gst::Caps> {
