@@ -176,6 +176,7 @@ impl SeekHandler {
                     SeekInfo::PreviousSeekDone(sample.clone(), Some(seek_segment.clone().upcast()));
                 gst::error!(CAT, obj: obj, "Setting {} seek_info: {:?}", self.name, state.seek_info);
                 state.handled_composition_seek = false;
+                state.nle_seek = None;
                 gst::error!(CAT, obj: obj, "Faking EOS before starting");
                 return Err(gst::FlowError::Eos);
             }
@@ -199,6 +200,7 @@ impl SeekHandler {
                     SeekInfo::PreviousSeekDone(sample.clone(), Some(seek_segment.clone().upcast()));
                 gst::error!(CAT, obj: obj, "Setting {} seek_info: {:?}", self.name, state.seek_info);
                 state.handled_composition_seek = false;
+                state.nle_seek = None;
                 gst::error!(CAT, obj: obj, "Faking EOS before starting");
                 return Err(gst::FlowError::Eos);
             }
@@ -350,10 +352,12 @@ impl SeekHandler {
             if obj.reverse() {
                 if seek_stop != segment.start() {
                     gst::info!(CAT, obj: obj, "Reverse playback but start != previous start, not using default segment");
+                    state.seek_info = SeekInfo::None;
                     return false;
                 }
             } else if seek_start != segment.stop() {
                 gst::info!(CAT, obj: obj, "Forward playback but start != previous stop, not using default segment");
+                state.seek_info = SeekInfo::None;
                 return false;
             }
         } else {
@@ -395,6 +399,7 @@ impl SeekHandler {
 
         if nle_seek.is_none() || state.handled_composition_seek {
             gst::info!(CAT, obj: obj, "Not expecting any NLE seek");
+            state.seek_info = SeekInfo::None;
             return false;
         }
 
