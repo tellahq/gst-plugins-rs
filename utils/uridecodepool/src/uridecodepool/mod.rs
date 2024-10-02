@@ -15,6 +15,16 @@ glib::wrapper! {
         @implements gst::ChildProxy;
 }
 
+impl UriDecodePoolSrc {
+    pub(crate) fn create_filter(
+        &self,
+        pipeline: &DecoderPipeline,
+        pad: &gst::Pad,
+    ) -> Option<gst::Element> {
+        self.imp().create_filter(pipeline, pad)
+    }
+}
+
 glib::wrapper! {
     pub struct UriDecodePool(ObjectSubclass<pool::UriDecodePool>);
 }
