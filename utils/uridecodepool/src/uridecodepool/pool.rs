@@ -247,6 +247,21 @@ impl UriDecodePool {
             return false;
         }
 
+        if state
+            .running
+            .iter()
+            .any(|p| p.imp().target_src().as_ref() == Some(src))
+        {
+            gst::debug!(
+                CAT,
+                "Pipeline already running for {}:{:?}",
+                src.name(),
+                src as *const _
+            );
+
+            return false;
+        }
+
         let decoderpipe = self.get_unused_or_create_pipeline(src, &mut state);
         gst::debug!(CAT, imp: self, "Starting {decoderpipe:?}");
         if let Err(err) = decoderpipe.imp().play() {
