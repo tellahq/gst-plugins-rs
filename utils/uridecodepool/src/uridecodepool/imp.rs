@@ -324,6 +324,9 @@ impl UriDecodePoolSrc {
                         if !*start_completed
                             && s.src() == Some(decoderpipe.pipeline().upcast_ref())
                             && s.pending() == gst::State::VoidPending
+                            // Can't call `start_complete` if the srcpad has not been activated yet
+                            // (we will call start_complete in the `start()` vmethod in that case)
+                            && this.obj().src_pad().mode() == gst::PadMode::Push
                         {
                             *start_completed = true;
                             gst::error!(CAT, obj: obj, "Calling start_complete");
@@ -353,6 +356,7 @@ impl UriDecodePoolSrc {
     // Returns `true`` if the event should be postponed or `false` if it should be sent to the base
     // class
     fn handle_seek_event(&self, event: &gst::Event) -> bool {
+        gst::error!(CAT, imp: self, "Got event: {event:?}");
         let start_completed = self.start_completed.lock().unwrap();
         let mut state = self.state.lock().unwrap();
         state.seek_event = Some(event.clone());
@@ -951,7 +955,7 @@ impl ElementImpl for UriDecodePoolSrc {
                         let decoderpipe = self.pool.get_decoderpipe(&self.obj());
                         if !decoderpipe.seek_handler().has_eos_sample() {
                             self.state.lock().unwrap().seek_seqnum =
-                                Some(decoderpipe.imp().initial_seek().unwrap().seqnum());
+                                decoderpipe.imp().initial_seek().map(|s| s.seqnum());
                         }
                         // self.obj().disconnect(get_initial_seek_sigid);
 
@@ -1146,6 +1150,7 @@ impl BaseSrcImpl for UriDecodePoolSrc {
         if res == gst::StateChangeSuccess::Success {
             gst::debug!(CAT, imp: self, "Already ready");
             if !*start_completed {
+                gst::error!(CAT, imp: self, "Calling complete");
                 self.obj().start_complete(gst::FlowReturn::Ok);
                 *start_completed = true;
                 drop(start_completed);
@@ -1154,6 +1159,8 @@ impl BaseSrcImpl for UriDecodePoolSrc {
                     gst::info!(CAT, imp: self, "Sending pending seek {pending_seek:?} after start complete");
                     self.send_event(pending_seek);
                 }
+            } else {
+                gst::info!(CAT, imp: self, "start_complete() already called");
             }
         } else {
             let settings = self.settings.lock().unwrap();
