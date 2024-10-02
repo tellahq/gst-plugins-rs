@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use crate::uridecodepool::seek_handler::SeekInfo;
+use crate::uridecodepool::seek_handler::{self, SeekInfo};
 use futures::prelude::*;
 use gst::glib::translate::ToGlibPtr;
 use std::io::prelude::*;
@@ -301,6 +301,7 @@ impl UriDecodePoolSrc {
         RUNTIME.spawn(async move {
             while let Some(message) = bus_stream.next().await {
                 let view = message.view();
+
                 let this = obj.imp();
                 let decoderpipe = {
                     let state = this.state.lock().unwrap();
@@ -317,6 +318,7 @@ impl UriDecodePoolSrc {
 
                 match view {
                     gst::MessageView::StateChanged(s) => {
+
                         let mut start_completed = this.start_completed.lock().unwrap();
 
                         if !*start_completed
@@ -324,7 +326,7 @@ impl UriDecodePoolSrc {
                             && s.pending() == gst::State::VoidPending
                         {
                             *start_completed = true;
-                            gst::info!(CAT, obj: obj, "Calling start_complete");
+                            gst::error!(CAT, obj: obj, "Calling start_complete");
                             obj.start_complete(gst::FlowReturn::Ok);
                         }
                     }
@@ -482,7 +484,13 @@ impl UriDecodePoolSrc {
                     if is_eos || sink.is_eos() {
                         let mut state = self.state.lock().unwrap();
                         if state.seek_seqnum.is_some() {
-                            gst::info!(CAT, imp: self, "Got EOS while waiting for FLUSH_STOP");
+                            let pipeline = state.decoderpipe.as_ref().unwrap().clone();
+
+                            gst::info!(CAT, imp: self, "Got EOS while waiting for FLUSH_STOP on {}", pipeline.name());
+                            drop(state);
+
+                            self.dot_pipeline();
+
                             // Assert if we have been waiting for flush for more than 10s
                             // to avoid infinite loop
                             std::thread::sleep(std::time::Duration::from_secs(2));
@@ -532,7 +540,6 @@ impl UriDecodePoolSrc {
                             }
                         }
 
-                        gst::debug!(CAT, imp: self, "Got EOS");
                         return Err(gst::FlowError::Eos);
                     }
 
@@ -641,6 +648,7 @@ impl UriDecodePoolSrc {
 
         state.needs_segment = true;
         state.decoderpipe = Some(decoderpipe.clone());
+        gst::error!(CAT, imp: self, "Setting decoderpipe to {decoderpipe:?}");
         drop(state);
 
         self.obj().notify("pipeline");
@@ -664,12 +672,6 @@ impl UriDecodePoolSrc {
         probe_info: &mut gst::PadProbeInfo,
         stream_start: &gst::event::StreamStart,
     ) -> gst::PadProbeReturn {
-        if self.state.lock().unwrap().seek_seqnum.is_some() {
-            gst::info!(CAT, imp: self, "Dropping stream-start while waiting flushing seek to be executed");
-
-            return gst::PadProbeReturn::Drop;
-        }
-
         let decoderpipe = self.decoderpipe().unwrap();
         let stream = if let Some(stream) = decoderpipe.stream() {
             stream
@@ -716,7 +718,7 @@ impl UriDecodePoolSrc {
     ) -> gst::PadProbeReturn {
         let mut state = self.state.lock().unwrap();
         if state.seek_seqnum.is_some() {
-            gst::info!(CAT, imp: self, "Dropping segment while waiting flushing seek to be executed");
+            gst::info!(CAT, imp: self, "Dropping segment while waiting flushing seek {:?} to be executed", state.seek_seqnum);
 
             return gst::PadProbeReturn::Drop;
         }
@@ -791,6 +793,15 @@ impl UriDecodePoolSrc {
 
         Ok(())
     }
+
+    pub(crate) fn create_filter(
+        &self,
+        pipeline: &DecoderPipeline,
+        pad: &gst::Pad,
+    ) -> Option<gst::Element> {
+        self.obj()
+            .emit_by_name::<Option<gst::Element>>("create-filter", &[&pipeline.pipeline(), &pad])
+    }
 }
 
 #[glib::object_subclass]
@@ -823,8 +834,32 @@ impl ObjectImpl for UriDecodePoolSrc {
                 glib::subclass::Signal::builder("source-setup")
                     .param_types([gst::Element::static_type()])
                     .build(),
+                /**
+                 * uridecodepoolsrc::get-initial-seek:
+                 *
+                 * This signal is emited when its underlying pipeline has been created
+                 * and is ready to be seeked.
+                 *
+                 * This signal overrides the #uridecodepoolsrc::inpoint and
+                 * #uridecodepoolsrc::duration properties as it will be used instead of those
+                 * values for the initial seek.
+                 *
+                 * Returns: a #GstEvent or None if a seek should be sent as soon as possible to the
+                 * underlying pipeline.                  */
                 glib::subclass::Signal::builder("get-initial-seek")
                     .return_type::<Option<gst::Event>>()
+                    .build(),
+                /**
+                 * uridecodepoolsrc::create-filter:
+                 * @pipeline: The pipeline to add the filter to
+                 * @pad: The pad after which the filter will be added
+                 *
+                 * Returns: a #GstElement which as exactly 1 sinkpad and 1 srcpad
+                 * to add as as a filter right before the sink of the underlying pipeline.
+                 */
+                glib::subclass::Signal::builder("create-filter")
+                    .param_types([gst::Pipeline::static_type(), gst::Pad::static_type()])
+                    .return_type::<Option<gst::Element>>()
                     .build(),
             ]
         });
@@ -889,36 +924,86 @@ impl ElementImpl for UriDecodePoolSrc {
     }
 
     fn send_event(&self, event: gst::Event) -> bool {
-        gst::log!(CAT, imp: self, "Got event {event:?}");
+        gst::error!(CAT, imp: self, "Got event {event:?}");
         if let gst::EventView::Seek(s) = event.view() {
-            gst::info!(CAT, imp: self, "Seeking {s:?}");
+            gst::info!(CAT, imp: self, "Got {s:?}");
+
+            if event.structure().map_or(false, |s| {
+                gst::error!(CAT, "Got struct {s:?}");
+                s.has_field("nlecomposition-seek")
+            }) {
+                gst::error!(CAT, "---> HERE I AM");
+                let decoderpipe = if let Some(decoderpipe) = self.decoderpipe() {
+                    decoderpipe
+                } else {
+                    let has_uri = self.settings.lock().unwrap().uri.is_some();
+                    let decoderpipe = if has_uri {
+                        let seek_event = event.clone();
+                        // let get_initial_seek_sigid =
+                        //     self.obj()
+                        //         .connect("get-initial-seek", false, move |args| {
+                        //             let obj = args[0].get::<gst::Element>().unwrap();
+                        //             gst::error!(CAT, obj: obj, "FIXME, be smart and rescale the seek to handle the  whole object taking into account the NLE seek!!");
+                        //             Some(seek_event.clone().into())
+                        //         }
+                        //     );
+                        //
+                        let decoderpipe = self.pool.get_decoderpipe(&self.obj());
+                        if !decoderpipe.seek_handler().has_eos_sample() {
+                            self.state.lock().unwrap().seek_seqnum =
+                                Some(decoderpipe.imp().initial_seek().unwrap().seqnum());
+                        }
+                        // self.obj().disconnect(get_initial_seek_sigid);
+
+                        decoderpipe
+                    } else {
+                        gst::error!(CAT, imp: self, "No URI set!!!!!!");
+                        return false;
+                    };
+
+                    self.set_decoderpipe(&decoderpipe);
+
+                    decoderpipe
+                };
+                gst::error!(CAT, imp: self, "Setting decoderpipe to {decoderpipe:?}");
+                if decoderpipe
+                    .seek_handler()
+                    .handle_nlecomposition_seek(&self.obj(), &event)
+                {
+                    self.state.lock().unwrap().seek_event = Some(event.clone());
+                    gst::error!(CAT, imp: self, "NleComposition initialization seek handled");
+                    return true;
+                }
+            } else {
+                gst::error!(CAT, "---> NOOOO NLE SEEK!! HERE I AM");
+            }
 
             // Avoid base class to handle seek event when it has been started
             // but the underlying pipeline is not ready yet.
             if self.handle_seek_event(&event) {
                 return true;
             }
-        } else if let gst::EventView::CustomUpstream(e) = event.view() {
-            if event
-                .structure()
-                .map_or(false, |s| s.has_name("nlecomposition-seek"))
-            {
-                let has_uri = self.settings.lock().unwrap().uri.is_some();
-                let decoderpipe = if has_uri {
-                    self.pool.get_decoderpipe(&self.obj())
-                } else {
-                    return false;
-                };
-
-                self.state.lock().unwrap().decoderpipe = Some(decoderpipe.clone());
-                if decoderpipe
-                    .seek_handler()
-                    .handle_nlecomposition_seek(&self.obj(), e)
-                {
-                    gst::error!(CAT, imp: self, "NleComposition FAKE seek handled");
-                    return true;
-                }
-            }
+            // } else if let gst::EventView::CustomUpstream(e) = event.view() {
+            //     if event
+            //         .structure()
+            //         .map_or(false, |s| s.has_name("nlecomposition-seek"))
+            //     {
+            //         let has_uri = self.settings.lock().unwrap().uri.is_some();
+            //         let decoderpipe = if has_uri {
+            //             self.pool.get_decoderpipe(&self.obj())
+            //         } else {
+            //             return false;
+            //         };
+            //
+            //         self.state.lock().unwrap().decoderpipe = Some(decoderpipe.clone());
+            //         if decoderpipe
+            //             .seek_handler()
+            //             .handle_nlecomposition_seek(&self.obj(), e)
+            //         {
+            //             gst::error!(CAT, imp: self, "NleComposition FAKE seek handled");
+            //             return true;
+            //         }
+            //     }
         }
 
         self.parent_send_event(event)
@@ -1003,11 +1088,13 @@ impl BaseSrcImpl for UriDecodePoolSrc {
                     state.needs_segment = true;
                     state.seek_segment = Some(segment.clone());
 
-                    if state.ignore_seek {
+                    drop(state);
+                    if decoderpipe.seek_handler().handle_seek(&self.obj(), s) {
                         gst::error!(CAT, imp: self, "Handling seek ourself, not forwarding to underlying pipeline");
                         return true;
                     }
-                    state.seek_seqnum = Some(seek_event.seqnum());
+
+                    self.state.lock().unwrap().seek_seqnum = Some(seek_event.seqnum());
 
                     gst::info!(CAT, imp: self, "Flushing seek... waiting for flush-stop with right seqnum ({:?}) before restarting pushing buffers", seek_event.seqnum());
                 }
@@ -1128,7 +1215,7 @@ impl BaseSrcImpl for UriDecodePoolSrc {
                 .decoderpipe()
                 .map_or(false, |p| p.seek_handler().handle_seek(&self.obj(), seek))
             {
-                gst::error!(CAT, "Seek handled");
+                gst::error!(CAT, imp: self, "Seek handled");
                 return true;
             }
 
@@ -1177,6 +1264,7 @@ impl BaseSrcImpl for UriDecodePoolSrc {
                 None,
             )
         };
+        gst::trace!(CAT, imp: self, "Got {sample:?}");
 
         let segment = match pipeline.seek_handler().process(&self.obj(), &sample) {
             Ok(SeekInfo::SeekSegment(seqnum, segment)) => {
@@ -1186,7 +1274,7 @@ impl BaseSrcImpl for UriDecodePoolSrc {
                 Some(segment)
             }
             Ok(SeekInfo::None) => {
-                gst::debug!(CAT, imp: self, "Using sample segment: {:?}", sample.segment());
+                gst::log!(CAT, imp: self, "Using sample segment: {:?}", sample.segment());
                 sample.segment().cloned()
             }
             Err((gst::FlowError::Eos, Some(seqnum))) => {
@@ -1280,14 +1368,7 @@ impl BaseSrcImpl for UriDecodePoolSrc {
                 }
             }
             gst::QueryViewMut::Custom(s) => {
-                if s.structure()
-                    .map_or(false, |s| s.name().as_str() == "can-seek-in-null")
-                {
-                    gst::info!(CAT, "Marking as seekable in NULL");
-                    s.structure_mut().set("res", true);
-
-                    return true;
-                } else if let Some(decoderpipe) = self.decoderpipe() {
+                if let Some(decoderpipe) = self.decoderpipe() {
                     return decoderpipe.pipeline().query(query);
                 }
             }
@@ -1314,4 +1395,3 @@ impl ChildProxyImpl for UriDecodePoolSrc {
         }
     }
 }
-

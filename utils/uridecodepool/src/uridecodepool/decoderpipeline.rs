@@ -182,17 +182,20 @@ impl DecoderPipeline {
             return;
         }
 
-        if self.stream_type() == gst::StreamType::VIDEO {
-            let clipper = gst::parse::bin_from_description("segmentclipper", true).unwrap();
-            if let Err(err) = self.pipeline().add(&clipper) {
-                gst::error!(CAT, imp: self, "Failed to add clipper: {:?}", err);
+        if let Some(Some(filter)) = self
+            .target_src()
+            .map(|s| s.create_filter(&*self.obj(), pad))
+        {
+            gst::error!(CAT, imp: self, "Got filter: {filter:?}");
+            if let Err(err) = self.pipeline().add(&filter) {
+                gst::error!(CAT, imp: self, "Failed to add filter: {:?}", err);
                 return;
             }
 
-            clipper.sync_state_with_parent().unwrap();
+            filter.sync_state_with_parent().unwrap();
 
-            let videorate_sinkpad = clipper.static_pad("sink").unwrap();
-            if let Err(err) = pad.link(&videorate_sinkpad) {
+            let filter_sinkpad = filter.sink_pads().first().unwrap().clone();
+            if let Err(err) = pad.link(&filter_sinkpad) {
                 gst::error!(CAT, imp: self, "Failed to link pads: {:?}", err);
                 gst::error!(CAT, imp: self, "Failed link pads {:?}:{:?}: {:#?}\n -> {:?}:{}: {:#?} \n: {:?}",
                     pad.parent().map(|p| p.name()), pad.name(),
@@ -202,7 +205,7 @@ impl DecoderPipeline {
                     err);
             }
 
-            let pad = clipper.static_pad("src").unwrap();
+            let pad = filter.src_pads().first().unwrap().clone();
             if let Err(err) = pad.link(&sinkpad) {
                 gst::error!(CAT, imp: self, "Failed to link pads: {:?}", err);
                 gst::error!(CAT, imp: self, "Failed link pads {:?}:{:?}: {:#?}\n -> {:?}:{}: {:#?} \n: {:?}",
@@ -461,7 +464,6 @@ impl DecoderPipeline {
                         gst::warning!(CAT, obj: self.pipeline, "Could not post message {message:?}: {e:?}");
                     }
                 } else if let Some(target) = self.target_src() {
-                    gst::debug!(CAT, obj: self.pipeline, "Posting context message to {target:?}");
                     if let Err(e) = target.post_message(message.to_owned()) {
                         gst::warning!(CAT, obj: self.pipeline, "Could not post message {message:?}: {e:?}");
                     }
@@ -480,6 +482,8 @@ impl DecoderPipeline {
                     && s.current() == gst::State::Playing
                     && self.state.lock().unwrap().pending_seek.as_ref().is_some()
                 {
+                    gst::debug!(CAT, obj: self.pipeline, "Pipeline started, seeking");
+
                     self.seek_in_thread();
                 }
             }
@@ -489,8 +493,6 @@ impl DecoderPipeline {
 
     fn seek_in_thread(&self) {
         let pipeline = self.pipeline();
-
-        gst::debug!(CAT, obj: self.pipeline, "Pipeline got STREAMN_SELECTION... pushing seek!");
 
         // Send seek from some other thread to avoid deadlocks
         pipeline.call_async(glib::clone!(@weak self as this => move |pipeline| {

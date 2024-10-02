@@ -176,6 +176,7 @@ impl SeekHandler {
                     SeekInfo::PreviousSeekDone(sample.clone(), Some(seek_segment.clone().upcast()));
                 gst::error!(CAT, obj: obj, "Setting {} seek_info: {:?}", self.name, state.seek_info);
                 state.handled_composition_seek = false;
+                gst::error!(CAT, obj: obj, "Faking EOS before starting");
                 return Err(gst::FlowError::Eos);
             }
         } else {
@@ -198,6 +199,7 @@ impl SeekHandler {
                     SeekInfo::PreviousSeekDone(sample.clone(), Some(seek_segment.clone().upcast()));
                 gst::error!(CAT, obj: obj, "Setting {} seek_info: {:?}", self.name, state.seek_info);
                 state.handled_composition_seek = false;
+                gst::error!(CAT, obj: obj, "Faking EOS before starting");
                 return Err(gst::FlowError::Eos);
             }
         }
@@ -211,7 +213,7 @@ impl SeekHandler {
     ) -> Result<Option<gst::Sample>, gst::FlowError> {
         let state = self.state.lock().unwrap();
         if state.nle_seek.as_ref().is_some() && !state.handled_composition_seek {
-            gst::debug!(CAT, obj: obj, "Not checking state because waiting for nleseek to be handled {} seek_info: {:?}", self.name, state.seek_info);
+            gst::debug!(CAT, obj: obj, "Not checking state because waiting for nleseek to be handled {} seek_info: {:?} - returning EOS!", self.name, state.seek_info);
 
             return Err(gst::FlowError::Eos);
         }
@@ -245,6 +247,7 @@ impl SeekHandler {
                 }
             }
 
+            gst::error!(CAT, obj: obj, "Faking EOS before starting");
             return Err((gst::FlowError::Eos, None));
         }
 
@@ -272,6 +275,7 @@ impl SeekHandler {
         drop(state);
 
         if let Err(gst::FlowError::Eos) = self.check_eos(obj, sample) {
+            gst::error!(CAT, obj: obj, "-=----> EOS!");
             return Err((gst::FlowError::Eos, seqnum));
         }
 
@@ -281,13 +285,13 @@ impl SeekHandler {
     pub(crate) fn handle_nlecomposition_seek(
         &self,
         obj: &super::UriDecodePoolSrc,
-        event: &gst::event::CustomUpstream,
+        seek: &gst::Event,
     ) -> bool {
-        let seek = event
-            .structure()
-            .unwrap()
-            .get::<gst::Event>("seek")
-            .unwrap();
+        // let seek = event
+        //     .structure()
+        //     .unwrap()
+        //     .get::<gst::Event>("seek")
+        //     .unwrap();
 
         let mut state = self.state.lock().unwrap();
         state.nle_seek = None;
@@ -359,18 +363,21 @@ impl SeekHandler {
             );
             if obj.reverse() {
                 if seek_stop != Some(outpoint) {
-                    gst::info!(CAT, obj: obj, "Reverse playback but stop != inpoint + duration, not using default segment");
+                    gst::error!(CAT, obj: obj, "Reverse playback but stop != inpoint + duration, not using default segment");
                     return false;
                 }
 
                 if seek_stop > Some(inpoint) {
-                    gst::info!(CAT, obj: obj, "Reverse playback but start > inpoint, not using default segment");
+                    gst::error!(CAT, obj: obj, "Reverse playback but start > inpoint, not using default segment");
                     return false;
                 }
             } else if seek_start != Some(inpoint) {
-                gst::info!(CAT, obj: obj, "seek_start({seek_start:?}) != inpoint({inpoint:?}), not using default segment");
+                gst::error!(CAT, obj: obj, "seek_start({seek_start:?}) != inpoint({inpoint:?}), not using default segment");
                 return false;
             }
+
+            gst::error!(CAT, obj: obj, "{} seek_start({seek_start:?}) ================================= inpoint({inpoint:?}), USING default segment",
+                obj.imp().decoderpipe().unwrap().name());
         }
         state.nle_seek = Some(seek.clone());
 
@@ -399,24 +406,37 @@ impl SeekHandler {
             return false;
         }
 
-        let src_pad = obj.src_pad();
-        if let Some(probe_id) = state.probe_id.take() {
-            gst::debug!(CAT, obj: obj, "Removed PROBE {probe_id:?}");
-            src_pad.remove_probe(probe_id);
-            state.probe_id = None;
-            state.pad_probe.set(None);
-        }
+        // let src_pad = obj.src_pad();
+        // if let Some(probe_id) = state.probe_id.take() {
+        //     gst::debug!(CAT, obj: obj, "Removed PROBE {probe_id:?}");
+        //     src_pad.remove_probe(probe_id);
+        //     state.probe_id = None;
+        //     state.pad_probe.set(None);
+        // }
 
-        state.pad_probe.set(Some(src_pad));
-        state.probe_id = src_pad.add_probe(
-            gst::PadProbeType::EVENT_FLUSH,
-            glib::clone!(@weak obj, @strong seek_event => @default-return gst::PadProbeReturn::Remove, move |_pad, probe_info| {
-                obj.imp().decoderpipe().unwrap().seek_handler().handle_flush_event_probe(&obj, probe_info, &seek_event)
-            }),
-        );
+        state.handled_composition_seek = true;
+        let (rate, flags, start_type, start, stop_type, stop) =
+            if let gst::EventView::Seek(s) = seek_event.view() {
+                s.get()
+            } else {
+                unreachable!();
+            };
+        let mut segment = gst::FormattedSegment::<gst::ClockTime>::new().upcast();
+        segment.do_seek(rate, flags, start_type, start, stop_type, stop);
+        if !matches!(state.seek_info, SeekInfo::PreviousSeekDone(_, _)) {
+            state.seek_info = SeekInfo::SeekSegment(seek_event.seqnum(), segment);
+        }
+        gst::debug!(CAT, obj: obj, "Setting {} seek_info: {:?}", self.name, state.seek_info);
+        // state.pad_probe.set(Some(src_pad));
+        // state.probe_id = src_pad.add_probe(
+        //     gst::PadProbeType::EVENT_FLUSH,
+        //     glib::clone!(@weak obj, @strong seek_event => @default-return gst::PadProbeReturn::Remove, move |_pad, probe_info| {
+        //         obj.imp().decoderpipe().unwrap().seek_handler().handle_flush_event_probe(&obj, probe_info, &seek_event)
+        //     }),
+        // );
         drop(state);
 
-        obj.imp().send_seek(seek.event().to_owned());
+        // obj.imp().send_seek(seek.event().to_owned());
 
         true
     }
