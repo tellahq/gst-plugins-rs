@@ -11,6 +11,8 @@ use gst::{
 };
 use once_cell::sync::Lazy;
 
+use crate::uridecodepool::seek_handler;
+
 use super::{pool::CAT, seek_handler::SeekHandler};
 
 #[derive(Debug)]
@@ -342,6 +344,14 @@ impl DecoderPipeline {
             self.pipeline.clone()
         };
 
+        if !self
+            .seek_handler
+            .should_send_seek(&seek_event, &*self.obj())
+        {
+            gst::error!(CAT, obj: pipeline, "asked not to discard seek {seek_event:?}");
+            return false;
+        }
+
         gst::error!(CAT, obj: pipeline, "--> Sending seek {:?}", seek_event);
         if !pipeline.send_event(seek_event) {
             gst::error!(CAT, obj: self.pipeline, "Failed to seek");
@@ -458,6 +468,7 @@ impl DecoderPipeline {
             gst::MessageView::NeedContext(..)
             | gst::MessageView::HaveContext(..)
             | gst::MessageView::Element(..) => {
+                self.seek_handler.handle_message(&*self.obj(), message);
                 if let Some(bus) = self.obj().pool().bus() {
                     gst::debug!(CAT, obj: self.pipeline, "Posting context message to the pool bus");
                     if let Err(e) = bus.post(message.to_owned()) {
@@ -499,7 +510,12 @@ impl DecoderPipeline {
             let mut state = this.state.lock().unwrap();
 
             let seek_event = if let Some(seek_event) = state.pending_seek.take() {
-                seek_event
+                if this.seek_handler.should_send_seek(&seek_event, &*this.obj()) {
+                    seek_event
+                } else {
+                    gst::error!(CAT, obj: pipeline, "asked not to discard seek {seek_event:?}");
+                    return;
+                }
             } else {
                 gst::error!(CAT, obj: pipeline, "--> No pending seek");
                 return;
