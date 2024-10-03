@@ -468,7 +468,6 @@ impl DecoderPipeline {
             gst::MessageView::NeedContext(..)
             | gst::MessageView::HaveContext(..)
             | gst::MessageView::Element(..) => {
-                self.seek_handler.handle_message(&*self.obj(), message);
                 if let Some(bus) = self.obj().pool().bus() {
                     gst::debug!(CAT, obj: self.pipeline, "Posting context message to the pool bus");
                     if let Err(e) = bus.post(message.to_owned()) {
