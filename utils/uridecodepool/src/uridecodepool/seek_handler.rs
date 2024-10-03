@@ -525,6 +525,7 @@ impl SeekHandler {
                     }
                 }
             }
+            i += 1;
         }
 
         gst::error!(CAT, obj: decoderpipeline, "Sending initialization seek");

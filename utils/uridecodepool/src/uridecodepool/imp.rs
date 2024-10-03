@@ -497,7 +497,8 @@ impl UriDecodePoolSrc {
 
                             // Assert if we have been waiting for flush for more than 10s
                             // to avoid infinite loop
-                            std::thread::sleep(std::time::Duration::from_secs(2));
+                            gst::fixme!(CAT, imp: self, "find a way to avoid that ugly sleep");
+                            std::thread::sleep(std::time::Duration::from_secs(1));
                             continue;
                         }
 

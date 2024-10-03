@@ -315,16 +315,16 @@ impl DecoderPipeline {
                 return true;
             }
 
-            let states = self.pipeline.state(Some(gst::ClockTime::from_seconds(0)));
-            gst::debug!(CAT, obj: self.pipeline, "{:?} Current state: {:?}", state.target_src,
-                        states.0);
-            match states.0 {
+            let (res, current_state, pending_state) =
+                self.pipeline.state(Some(gst::ClockTime::ZERO));
+            gst::error!(CAT, obj: self.pipeline, "{:?} Current state: {:?}", state.target_src, state);
+            match res {
                 Ok(_) => {
-                    if states.1 != gst::State::Playing {
+                    if current_state != gst::State::Playing {
                         gst::info!(
                             CAT,
                             obj: self.pipeline,
-                            "Waiting for pipeline to preroll before seeking it {seek_event:?}"
+                            "Waiting for pipeline to be ready seeking it {seek_event:?}"
                         );
 
                         state.pending_seek = Some(seek_event);
@@ -334,7 +334,7 @@ impl DecoderPipeline {
                     }
                 }
                 Err(e) => {
-                    gst::error!(CAT, obj: self.pipeline, "Failed to get current state: {e:?}");
+                    gst::error!(CAT, obj: self.pipeline, "Failed to get state: {e:?}");
 
                     return false;
                 }
@@ -492,7 +492,7 @@ impl DecoderPipeline {
                     && s.current() == gst::State::Playing
                     && self.state.lock().unwrap().pending_seek.as_ref().is_some()
                 {
-                    gst::debug!(CAT, obj: self.pipeline, "Pipeline started, seeking");
+                    gst::debug!(CAT, obj: self.pipeline, "Pipeline ready to seek");
 
                     self.seek_in_thread();
                 }
