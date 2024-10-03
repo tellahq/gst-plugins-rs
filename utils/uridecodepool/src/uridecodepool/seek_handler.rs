@@ -171,13 +171,13 @@ impl SeekHandler {
             } else if seek_segment.stop().is_some() && Some(start) >= seek_segment.stop()
                 || buffer_starts_at_end_of_segment
             {
-                gst::info!(CAT, obj: obj, "Buffer reached end of segment {seek_segment:?}");
+                gst::info!(CAT, obj: obj, "Buffer reached end of segment \n{seek_segment:#?} \n {sample:#?} \n");
                 state.seek_info =
                     SeekInfo::PreviousSeekDone(sample.clone(), Some(seek_segment.clone().upcast()));
                 gst::error!(CAT, obj: obj, "Setting {} seek_info: {:?}", self.name, state.seek_info);
                 state.handled_composition_seek = false;
                 state.nle_seek = None;
-                gst::error!(CAT, obj: obj, "Faking EOS before starting");
+                gst::error!(CAT, obj: obj, "Faking EOS");
                 return Err(gst::FlowError::Eos);
             }
         } else {
@@ -201,7 +201,7 @@ impl SeekHandler {
                 gst::error!(CAT, obj: obj, "Setting {} seek_info: {:?}", self.name, state.seek_info);
                 state.handled_composition_seek = false;
                 state.nle_seek = None;
-                gst::error!(CAT, obj: obj, "Faking EOS before starting");
+                gst::error!(CAT, obj: obj, "Faking EOS");
                 return Err(gst::FlowError::Eos);
             }
         }
@@ -398,7 +398,7 @@ impl SeekHandler {
         let nle_seek = state.nle_seek.clone();
 
         if nle_seek.is_none() || state.handled_composition_seek {
-            gst::info!(CAT, obj: obj, "Not expecting any NLE seek");
+            gst::info!(CAT, obj: obj, "Not expecting any NLE seek, forward: {:?}", seek);
             state.seek_info = SeekInfo::None;
             return false;
         }
@@ -408,16 +408,11 @@ impl SeekHandler {
             gst::info!(CAT, obj: obj, "expected: {:?} != {:?}",
                 nle_seek.as_ref().map(|s| s.seqnum()),
                 seek_event.seqnum());
+            state.nle_seek = None;
+            state.seek_info = SeekInfo::None;
+            state.handled_composition_seek = false;
             return false;
         }
-
-        // let src_pad = obj.src_pad();
-        // if let Some(probe_id) = state.probe_id.take() {
-        //     gst::debug!(CAT, obj: obj, "Removed PROBE {probe_id:?}");
-        //     src_pad.remove_probe(probe_id);
-        //     state.probe_id = None;
-        //     state.pad_probe.set(None);
-        // }
 
         state.handled_composition_seek = true;
         let (rate, flags, start_type, start, stop_type, stop) =
@@ -432,16 +427,7 @@ impl SeekHandler {
             state.seek_info = SeekInfo::SeekSegment(seek_event.seqnum(), segment);
         }
         gst::debug!(CAT, obj: obj, "Setting {} seek_info: {:?}", self.name, state.seek_info);
-        // state.pad_probe.set(Some(src_pad));
-        // state.probe_id = src_pad.add_probe(
-        //     gst::PadProbeType::EVENT_FLUSH,
-        //     glib::clone!(@weak obj, @strong seek_event => @default-return gst::PadProbeReturn::Remove, move |_pad, probe_info| {
-        //         obj.imp().decoderpipe().unwrap().seek_handler().handle_flush_event_probe(&obj, probe_info, &seek_event)
-        //     }),
-        // );
         drop(state);
-
-        // obj.imp().send_seek(seek.event().to_owned());
 
         true
     }
@@ -504,6 +490,198 @@ impl SeekHandler {
             }
 
             Some(buffer)
+        } else {
+            None
+        }
+    }
+
+    pub fn should_send_seek(&self, event: &gst::Event, decoderpipeline: &DecoderPipeline) -> bool {
+        if let Some(structure) = event.structure() {
+            if !structure
+                .get::<bool>("nlecomposition-seek")
+                .map_or(false, |v| v)
+            {
+                gst::error!(CAT, obj: decoderpipeline, "Not a composition seek event");
+                return true;
+            }
+        } else {
+            return true;
+        }
+
+        let mut i = 0;
+        let pad = decoderpipeline
+            .imp()
+            .sink()
+            .sink_pads()
+            .first()
+            .unwrap()
+            .clone();
+        while let Some(event) = pad.sticky_event::<gst::event::Tag>(i) {
+            if let gst::EventView::Tag(tag) = event.view() {
+                // Do not send initialization seek to sub timelines!
+                if let Some(is_ges_timeline) = tag.tag().generic("is-ges-timeline") {
+                    if is_ges_timeline.get::<bool>().unwrap() {
+                        gst::error!(CAT, obj: decoderpipeline, "Tag with is-ges-timeline NOT SENDING INIT SEEK!");
+                        return false;
+                    }
+                }
+            }
+        }
+
+        gst::error!(CAT, obj: decoderpipeline, "Sending initialization seek");
+
+        true
+    }
+
+    pub fn handle_message(&self, pipeline: &DecoderPipeline, message: &gst::Message) -> bool {
+        // if message
+        //     .structure()
+        //     .map_or(false, |s| s.has_name("nleobject-query-initialization-seek"))
+        // {
+        //     let q = message
+        //         .structure()
+        //         .unwrap()
+        //         .get::<NleObjectQueryInitializationSeek>("query")
+        //         .unwrap();
+        //
+        //     gst::error!(CAT, obj: pipeline, "{:?} nle_seek: {:?}",
+        //         pipeline.imp().target_src().map_or("none".to_string(), |p| p.name().to_string()),
+        //         self.state
+        //         .lock()
+        //         .as_ref()
+        //         .unwrap()
+        //         .nle_seek,
+        //     );
+        //     if let Some(seek) = self
+        //         .state
+        //         .lock()
+        //         .as_ref()
+        //         .unwrap()
+        //         .nle_seek
+        //         .clone()
+        //         .or_else(|| pipeline.imp().initial_seek())
+        //     {
+        //         gst::info!(CAT, obj: pipeline, "Got nleobject-query-initialization-seek: {:?} -> {:?}", q, seek);
+        //         q.set_initialization_seek(Some(seek));
+        //     }
+        //
+        //     gst::error!(CAT, obj: pipeline, "Got nleobject-query-initialization-seek: {:?} -> {:?} {:?}", q, q.get_initialization_seek(),
+        //     message);
+        //
+        //     return true;
+        // }
+        //
+        return false;
+    }
+}
+
+// -------------
+use glib::translate::*;
+use gst::structure::StructureRef;
+use std::fmt;
+use std::ptr;
+
+use super::{decoderpipeline, DecoderPipeline};
+
+mod ffi {
+    use gst::ffi::GstEvent;
+    use gst::glib::ffi::{gpointer, GMutex};
+
+    #[repr(C)]
+    pub struct NleObjectQueryInitializationSeek {
+        pub lock: GMutex,
+        pub initialization_seek: *mut GstEvent,
+    }
+
+    extern "C" {
+        pub fn g_atomic_rc_box_acquire(mem_block: gpointer) -> gpointer;
+        pub fn g_atomic_rc_box_release(mem_block: gpointer);
+
+    }
+}
+
+glib::wrapper! {
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    pub struct NleObjectQueryInitializationSeek(Boxed<ffi::NleObjectQueryInitializationSeek>);
+
+    match fn {
+        copy => |ptr| ffi::g_atomic_rc_box_acquire(ptr as *mut _) as *mut ffi::NleObjectQueryInitializationSeek,
+        free => |ptr| ffi::g_atomic_rc_box_release(ptr as *mut _),
+        type_ => || glib::gobject_ffi::g_type_from_name(b"NleObjectQueryInitializationSeek\0".as_ptr() as *const _),
+    }
+}
+
+unsafe impl Send for NleObjectQueryInitializationSeek {}
+unsafe impl Sync for NleObjectQueryInitializationSeek {}
+
+impl NleObjectQueryInitializationSeek {
+    pub fn new(ptr: *mut ffi::NleObjectQueryInitializationSeek) -> Self {
+        unsafe { from_glib_full(ptr) }
+    }
+
+    pub fn set_initialization_seek(&self, event: Option<gst::Event>) {
+        unsafe {
+            let ptr: *mut ffi::NleObjectQueryInitializationSeek = self.to_glib_none().0;
+
+            // Lock the mutex
+            gst::glib::ffi::g_mutex_lock(&(*ptr).lock as *const _ as *mut _);
+
+            // Perform the operation under the lock
+            if let Some(event) = event {
+                // If there's an existing event, unref it first
+                if !(*ptr).initialization_seek.is_null() {
+                    gst::ffi::gst_event_unref((*ptr).initialization_seek);
+                }
+                (*ptr).initialization_seek = event.into_glib_ptr();
+            } else {
+                if !(*ptr).initialization_seek.is_null() {
+                    gst::ffi::gst_event_unref((*ptr).initialization_seek);
+                    (*ptr).initialization_seek = std::ptr::null_mut();
+                }
+            }
+
+            // Unlock the mutex
+            gst::glib::ffi::g_mutex_unlock(&(*ptr).lock as *const _ as *mut _);
+        }
+    }
+
+    pub fn get_initialization_seek(&self) -> Option<gst::Event> {
+        unsafe {
+            let ptr: *mut ffi::NleObjectQueryInitializationSeek = self.to_glib_none().0;
+            if (*ptr).initialization_seek.is_null() {
+                None
+            } else {
+                Some(gst::Event::from_glib_none((*ptr).initialization_seek))
+            }
+        }
+    }
+}
+
+pub fn get_nle_object_query_initialization_seek(
+    structure: &StructureRef,
+) -> Option<NleObjectQueryInitializationSeek> {
+    unsafe {
+        let mut value = ptr::null_mut();
+        let key =
+            std::ffi::CStr::from_bytes_with_nul(b"nleobject-query-initialization-seek\0").unwrap();
+
+        let gtype = NleObjectQueryInitializationSeek::static_type();
+
+        if gtype == gst::glib::Type::INVALID {
+            return None;
+        }
+
+        if gst::ffi::gst_structure_get(
+            structure.as_ptr(),
+            key.as_ptr(),
+            gtype.into_glib(),
+            &mut value as *mut *mut std::os::raw::c_void,
+            ptr::null_mut::<*mut std::os::raw::c_void>(),
+        ) != gst::glib::ffi::GFALSE
+        {
+            Some(from_glib_full(
+                value as *mut ffi::NleObjectQueryInitializationSeek,
+            ))
         } else {
             None
         }
