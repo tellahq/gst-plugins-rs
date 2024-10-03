@@ -1115,7 +1115,9 @@ impl BaseSrcImpl for UriDecodePoolSrc {
                 decoderpipe.imp().name()
             );
 
-            decoderpipe.imp().seek(seek_event);
+            if !decoderpipe.imp().seek(seek_event) {
+                self.state.lock().unwrap().seek_seqnum = None;
+            }
             true
         } else {
             gst::info!(CAT, imp: self, "No pipeline to seek");
