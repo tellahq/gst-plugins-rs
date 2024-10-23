@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use crate::uridecodepool::seek_handler::{self, SeekInfo};
+use crate::uridecodepool::seek_handler::{self, NleCompositionSeekResult, SeekInfo};
 use futures::prelude::*;
 use gst::glib::translate::ToGlibPtr;
 use std::io::prelude::*;
@@ -725,6 +725,26 @@ impl UriDecodePoolSrc {
         gst::PadProbeReturn::Ok
     }
 
+    fn eos_probe(
+        &self,
+        probe_info: &mut gst::PadProbeInfo,
+        eos: &gst::event::Eos,
+    ) -> gst::PadProbeReturn {
+        let mut state = self.state.lock().unwrap();
+
+        let mut builder = gst::event::Eos::builder()
+            .running_time_offset(eos.running_time_offset())
+            .seqnum(eos.seqnum());
+        if let Some(seqnum) = state.segment_seqnum.as_ref() {
+            builder = builder.seqnum(*seqnum);
+            gst::log!(CAT, imp: self, "Setting eos seqnum: {seqnum:?}");
+        }
+
+        probe_info.data = Some(gst::PadProbeData::Event(builder.build()));
+
+        gst::PadProbeReturn::Ok
+    }
+
     fn segment_probe(
         &self,
         probe_info: &mut gst::PadProbeInfo,
@@ -739,9 +759,14 @@ impl UriDecodePoolSrc {
 
         gst::debug!(CAT, imp: self, "Got segment {new_segment:#?}");
         if let Some(segment) = state.current_segment.clone() {
-            let mut builder = gst::event::Segment::builder(&segment)
-                .running_time_offset(new_segment.running_time_offset())
-                .seqnum(new_segment.seqnum());
+            let mut builder = gst::event::Segment::builder(
+                new_segment
+                    .segment()
+                    .downcast_ref::<gst::ClockTime>()
+                    .unwrap(),
+            )
+            .running_time_offset(new_segment.running_time_offset())
+            .seqnum(new_segment.seqnum());
 
             if let Some(seqnum) = state.segment_seqnum.as_ref() {
                 builder = builder.seqnum(*seqnum);
@@ -909,6 +934,7 @@ impl ObjectImpl for UriDecodePoolSrc {
                     }
                     gst::EventView::StreamStart(s) => this.stream_start_probe(probe_info, s),
                     gst::EventView::Segment(s) => this.segment_probe(probe_info, s),
+                    gst::EventView::Eos(eos) => this.eos_probe(probe_info, eos),
                     _ => gst::PadProbeReturn::Ok
                 }
 
@@ -942,32 +968,21 @@ impl ElementImpl for UriDecodePoolSrc {
         if let gst::EventView::Seek(s) = event.view() {
             gst::info!(CAT, imp: self, "Got {s:?}");
 
-            if event.structure().map_or(false, |s| {
-                gst::error!(CAT, "Got struct {s:?}");
-                s.has_field("nlecomposition-seek")
-            }) {
-                gst::error!(CAT, "---> HERE I AM");
+            if event
+                .structure()
+                .map_or(false, |s| s.has_field("nlecomposition-seek"))
+            {
                 let decoderpipe = if let Some(decoderpipe) = self.decoderpipe() {
                     decoderpipe
                 } else {
                     let has_uri = self.settings.lock().unwrap().uri.is_some();
                     let decoderpipe = if has_uri {
                         let seek_event = event.clone();
-                        // let get_initial_seek_sigid =
-                        //     self.obj()
-                        //         .connect("get-initial-seek", false, move |args| {
-                        //             let obj = args[0].get::<gst::Element>().unwrap();
-                        //             gst::error!(CAT, obj: obj, "FIXME, be smart and rescale the seek to handle the  whole object taking into account the NLE seek!!");
-                        //             Some(seek_event.clone().into())
-                        //         }
-                        //     );
-                        //
                         let decoderpipe = self.pool.get_decoderpipe(&self.obj());
                         if !decoderpipe.seek_handler().has_eos_sample() {
                             self.state.lock().unwrap().seek_seqnum =
                                 decoderpipe.imp().initial_seek().map(|s| s.seqnum());
                         }
-                        // self.obj().disconnect(get_initial_seek_sigid);
 
                         decoderpipe
                     } else {
@@ -980,16 +995,28 @@ impl ElementImpl for UriDecodePoolSrc {
                     decoderpipe
                 };
                 gst::error!(CAT, imp: self, "Setting decoderpipe to {decoderpipe:?}");
-                if decoderpipe
+                match decoderpipe
                     .seek_handler()
                     .handle_nlecomposition_seek(&self.obj(), &event)
                 {
-                    self.state.lock().unwrap().seek_event = Some(event.clone());
-                    gst::error!(CAT, imp: self, "NleComposition initialization seek handled");
-                    return true;
+                    NleCompositionSeekResult::Expected => {
+                        self.state.lock().unwrap().seek_event = Some(event.clone());
+
+                        return true;
+                    }
+                    NleCompositionSeekResult::UseSeqnum(seqnum) => {
+                        // Assume this is the case where we are used in an "intermediary" nested composition, we do not have any "initial seek"
+                        // as only sources will be seeked, and we can ignore the seek here
+                        gst::error!(CAT, imp: self, "Got an NLE seek event without a toplevel seek,
+                            ignoring the seek but using its seqnum for the rest of the data flow {:?}",
+                            event.seqnum());
+                        self.state.lock().unwrap().segment_seqnum = Some(seqnum);
+                        return true;
+                    }
+                    _ => {
+                        gst::error!(CAT, "---> Unexpected NLE SEEK!! forwarding it");
+                    }
                 }
-            } else {
-                gst::error!(CAT, "---> NOOOO NLE SEEK!! HERE I AM");
             }
 
             // Avoid base class to handle seek event when it has been started
@@ -997,27 +1024,6 @@ impl ElementImpl for UriDecodePoolSrc {
             if self.handle_seek_event(&event) {
                 return true;
             }
-            // } else if let gst::EventView::CustomUpstream(e) = event.view() {
-            //     if event
-            //         .structure()
-            //         .map_or(false, |s| s.has_name("nlecomposition-seek"))
-            //     {
-            //         let has_uri = self.settings.lock().unwrap().uri.is_some();
-            //         let decoderpipe = if has_uri {
-            //             self.pool.get_decoderpipe(&self.obj())
-            //         } else {
-            //             return false;
-            //         };
-            //
-            //         self.state.lock().unwrap().decoderpipe = Some(decoderpipe.clone());
-            //         if decoderpipe
-            //             .seek_handler()
-            //             .handle_nlecomposition_seek(&self.obj(), e)
-            //         {
-            //             gst::error!(CAT, imp: self, "NleComposition FAKE seek handled");
-            //             return true;
-            //         }
-            //     }
         }
 
         self.parent_send_event(event)
@@ -1287,8 +1293,12 @@ impl BaseSrcImpl for UriDecodePoolSrc {
 
         let segment = match pipeline.seek_handler().process(&self.obj(), &sample) {
             Ok(SeekInfo::SeekSegment(seqnum, segment)) => {
-                gst::log!(CAT, imp: self, "Got seek segment after process --> new seqnum: {seqnum:?} -- {:?}",  self.state.lock().unwrap().seek_seqnum);
-                self.state.lock().unwrap().segment_seqnum = Some(seqnum);
+                let mut state = self.state.lock().unwrap();
+                if Some(seqnum) != state.segment_seqnum {
+                    gst::error!(CAT, imp: self, "Got seek segment after process --> new seqnum: {seqnum:?} -- {:?}",  state.seek_seqnum);
+                    state.segment_seqnum = Some(seqnum);
+                }
+
 
                 Some(segment)
             }
