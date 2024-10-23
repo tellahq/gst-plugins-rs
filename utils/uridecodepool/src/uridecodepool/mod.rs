@@ -57,7 +57,7 @@ impl DecoderPipeline {
     }
 
     pub(crate) fn seek_handler(&self) -> &seek_handler::SeekHandler {
-        &self.imp().seek_handler
+        self.imp().seek_handler()
     }
 
     pub(crate) fn reset(&self, uri: &str, caps: &gst::Caps, stream_id: Option<&str>) {
@@ -73,10 +73,11 @@ impl DecoderPipeline {
     }
 
     pub(crate) fn name(&self) -> &str {
-        &self.imp().name
+        &self.imp().name.get().unwrap()
     }
 
     pub(crate) fn new(
+        name: &str,
         uri: &str,
         caps: &gst::Caps,
         stream_id: Option<&str>,
@@ -86,6 +87,7 @@ impl DecoderPipeline {
         let this: DecoderPipeline = glib::Object::builder()
             .property("pool", pool)
             .property("initial-seek", initial_seek)
+            .property("name", name)
             .build();
 
         this.reset(uri, caps, stream_id);

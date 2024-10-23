@@ -298,7 +298,7 @@ impl UriDecodePool {
                 CAT,
                 obj: pipeline,
                 "{} for {} -- {:?}?stream-id{:?} -- {:?}",
-                if pipe.imp().seek_handler.has_eos_sample() {
+                if pipe.imp().seek_handler().has_eos_sample() {
                     "Reusing already running pipeline to try to keep flow"
                 } else {
                     "Using already prepared pipeline"
@@ -370,7 +370,13 @@ impl UriDecodePool {
 
         let decoderpipe = decoderpipe.map_or_else(
             || {
+                let pipeline_name = format!(
+                    "{}_{}",
+                    src.name(),
+                    src.imp().prepare_pipeline_next_number()
+                );
                 let pipeline = DecoderPipeline::new(
+                    &pipeline_name,
                     uri.as_ref()
                         .expect("URI should be set when getting an underlying pipeline"),
                     &caps,
@@ -498,10 +504,10 @@ impl UriDecodePool {
         state.running.retain(|p| p != &pipeline);
 
         let pipeline_imp = pipeline.imp();
-        if pipeline_imp.seek_handler.has_eos_sample() {
+        if pipeline_imp.seek_handler().has_eos_sample() {
             let mut cleanup_timeout = self.settings.lock().unwrap().cleanup_timeout;
 
-            // FIXME: Find a better way to handler keeping the pipeline with fake EOS around
+            // FIXME: Find a better way to handle keeping the pipeline with fake EOS around
             if cleanup_timeout < std::time::Duration::from_secs(1) {
                 cleanup_timeout = std::time::Duration::from_secs(1);
             }
