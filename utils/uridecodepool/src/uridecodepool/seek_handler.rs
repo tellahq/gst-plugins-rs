@@ -39,6 +39,18 @@ impl State {
     }
 }
 
+#[derive(Debug)]
+pub(crate) enum NleCompositionSeekResult {
+    /// The seek is unexpected or invalid - handle it as a regular seek
+    Unexpected,
+    /// The seek matches expectations - use it as our seek
+    Expected,
+    /// The seek is expected but we haven't received an initialization seek
+    /// Assume our underlying pipeline is a nested timeline and the unrelying
+    /// timeline will be the one that seeks
+    UseSeqnum(gst::Seqnum),
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) enum SeekInfo {
     #[default]
@@ -287,13 +299,7 @@ impl SeekHandler {
         &self,
         obj: &super::UriDecodePoolSrc,
         seek: &gst::Event,
-    ) -> bool {
-        // let seek = event
-        //     .structure()
-        //     .unwrap()
-        //     .get::<gst::Event>("seek")
-        //     .unwrap();
-
+    ) -> NleCompositionSeekResult {
         let mut state = self.state.lock().unwrap();
         state.nle_seek = None;
         gst::debug!(CAT, obj: obj, "nlecomposition-seek: {:?}", seek);
@@ -310,36 +316,47 @@ impl SeekHandler {
             }
             _ => {
                 gst::error!(CAT, obj: obj, "Seeked with wrong format {seek:?}");
-                return false;
+                return NleCompositionSeekResult::Unexpected;
             }
         };
 
         if rate.abs() != 1.0 {
             gst::info!(CAT, obj: obj, "Seeked with abs(rate) != 1.0, not using default segment");
 
-            return false;
+            return NleCompositionSeekResult::Unexpected;
         }
 
         if start_type != gst::SeekType::Set || stop_type != gst::SeekType::Set {
             gst::info!(CAT, obj: obj, "Seek type not supported, start type:{start_type:?} stop type:{stop_type:?}");
 
-            return false;
+            return NleCompositionSeekResult::Unexpected;
         }
 
         if obj.reverse() {
             if rate > 0.0 {
                 gst::info!(CAT, obj: obj, "Reverse playack but got a forward seek, not using default segment");
-                return false;
+                return NleCompositionSeekResult::Unexpected;
             }
         } else if rate < 0.0 {
             gst::info!(CAT, obj: obj, "Forward playback but got a reverse seek, not using default segment");
-            return false;
+            return NleCompositionSeekResult::Unexpected;
         }
 
         let duration = obj.duration();
         if duration.is_none() {
-            gst::error!(CAT, obj: obj, "No duration, not using NLE seek");
-            return false;
+            if matches!(state.seek_info, SeekInfo::None) {
+                gst::fixme!(CAT, obj: obj, "This assume NLE is used **through** GES \
+                            and GES is responsible for sending the 'intial-seek' and \
+                            does not send it in that case because our underlying \
+                            pipeline is a nested timeline");
+                let seqnum = seek.seqnum();
+
+                gst::error!(CAT, obj: obj, "Force using seqnum {seqnum:?}");
+                return NleCompositionSeekResult::UseSeqnum(seqnum);
+            }
+
+            gst::error!(CAT, obj: obj, "We had no initial seek and an unexpected seek");
+            return NleCompositionSeekResult::Unexpected;
         }
 
         if let SeekInfo::PreviousSeekDone(_, ref segment) = state.seek_info {
@@ -352,12 +369,12 @@ impl SeekHandler {
                 if seek_stop != segment.start() {
                     gst::info!(CAT, obj: obj, "Reverse playback but start != previous start, not using default segment");
                     state.seek_info = SeekInfo::None;
-                    return false;
+                    return NleCompositionSeekResult::Unexpected;
                 }
             } else if seek_start != segment.stop() {
                 gst::info!(CAT, obj: obj, "Forward playback but start != previous stop, not using default segment");
                 state.seek_info = SeekInfo::None;
-                return false;
+                return NleCompositionSeekResult::Unexpected;
             }
         } else {
             let (inpoint, outpoint) = (
@@ -367,16 +384,16 @@ impl SeekHandler {
             if obj.reverse() {
                 if seek_stop != Some(outpoint) {
                     gst::error!(CAT, obj: obj, "Reverse playback but stop != inpoint + duration, not using default segment");
-                    return false;
+                    return NleCompositionSeekResult::Unexpected;
                 }
 
                 if seek_stop > Some(inpoint) {
                     gst::error!(CAT, obj: obj, "Reverse playback but start > inpoint, not using default segment");
-                    return false;
+                    return NleCompositionSeekResult::Unexpected;
                 }
             } else if seek_start != Some(inpoint) {
                 gst::error!(CAT, obj: obj, "seek_start({seek_start:?}) != inpoint({inpoint:?}), not using default segment");
-                return false;
+                return NleCompositionSeekResult::Unexpected;
             }
 
             gst::error!(CAT, obj: obj, "{} seek_start({seek_start:?}) ================================= inpoint({inpoint:?}), USING default segment",
@@ -384,7 +401,7 @@ impl SeekHandler {
         }
         state.nle_seek = Some(seek.clone());
 
-        true
+        return NleCompositionSeekResult::Expected;
     }
 
     pub(crate) fn handle_seek(
@@ -425,7 +442,7 @@ impl SeekHandler {
         if !matches!(state.seek_info, SeekInfo::PreviousSeekDone(_, _)) {
             state.seek_info = SeekInfo::SeekSegment(seek_event.seqnum(), segment);
         }
-        gst::debug!(CAT, obj: obj, "Setting {} seek_info: {:?}", self.name, state.seek_info);
+        gst::error!(CAT, obj: obj, "Setting {} seek_info: {:?}", self.name, state.seek_info);
         drop(state);
 
         true
