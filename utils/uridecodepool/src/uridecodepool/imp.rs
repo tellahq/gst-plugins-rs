@@ -63,6 +63,9 @@ struct State {
     needs_segment: bool,
     seek_segment: Option<gst::Segment>,
     ignore_seek: bool,
+
+    // Number of pipelines prepared for that source
+    n_prepared_pipelines: u32,
 }
 
 #[derive(Properties, Debug)]
@@ -178,6 +181,13 @@ impl futures::stream::FusedStream for CustomBusStream {
 }
 
 impl UriDecodePoolSrc {
+    pub(crate) fn prepare_pipeline_next_number(&self) -> u32 {
+        let mut state = self.state.lock().unwrap();
+        state.n_prepared_pipelines += 1;
+
+        state.n_prepared_pipelines - 1
+    }
+
     pub(crate) fn send_seek(&self, seek: gst::Event) {
         gst::debug!(CAT, imp: self, "Sending seek event {:?}", seek);
 
@@ -210,9 +220,8 @@ impl UriDecodePoolSrc {
 
         let pipeline = decoderpipe.pipeline();
         let fname = format!(
-            "{}-{}-{}.dot",
+            "{}-{}.dot",
             gst::get_timestamp() - *START_TIME,
-            self.obj().name(),
             pipeline.name()
         );
 
