@@ -22,8 +22,8 @@ struct RemappedSegment {
 struct State {
     stream_time: Option<gst::ClockTime>,
     seek_info: SeekInfo,
-
     last_remapped_segment: Option<RemappedSegment>,
+    pushed_buffer_in_segment: bool,
 
     // Seek event received from NLE while relinking stack
     nle_seek: Option<gst::Event>,
@@ -38,6 +38,7 @@ impl State {
     fn set_seek_info(&mut self, seek_info: SeekInfo) {
         self.seek_info = seek_info;
         self.last_remapped_segment = None;
+        self.pushed_buffer_in_segment = false;
     }
 
     fn reset(&mut self, obj: &glib::Object) {
@@ -164,19 +165,19 @@ impl SeekHandler {
         &self,
         obj: &super::UriDecodePoolSrc,
         sample: &gst::Sample,
-    ) -> Result<bool, gst::FlowError> {
+    ) -> Result<(), gst::FlowError> {
         let mut state = self.state.lock().unwrap();
         let seek_segment = if let SeekInfo::SeekSegment(_, ref seek_segment) = state.seek_info {
             seek_segment.downcast_ref::<gst::format::Time>().unwrap()
         } else {
             gst::log!(CAT, obj: obj, "No seek segment {:?}", state.seek_info);
-            return Ok(false);
+            return Ok(());
         };
 
         let (clipping_succeeded, start, stop) =
             self.get_sample_start_end_stream_time(sample, obj)?;
         if !clipping_succeeded {
-            return Ok(false);
+            return Ok(());
         }
         // This logic follows the implementation of gst::Segment::clip
         // Buffer has a duration != 0 and its stop is right at the beginning of the segment
@@ -188,20 +189,47 @@ impl SeekHandler {
             && seek_segment.start() != seek_segment.stop()
             && Some(start) == seek_segment.stop();
 
+        let check_needs_at_least_one_buffer = || {
+            if state.pushed_buffer_in_segment {
+                false
+            } else if let Some(pipeline) = obj.pipeline() {
+                if pipeline
+                    .iterate_all_by_element_factory_name("segmentclipper")
+                    .next()
+                    .is_ok()
+                {
+                    gst::info!(CAT, obj: obj, "Got a segmentclipper in underlying pipeline and \
+                        got no buffer before EOS. Use the same logic as segmentclipper in that case \
+                        to handle input streams with 'random/big gaps'");
+
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        };
+
         if seek_segment.rate() > 0.0 {
             // Forward playback
             if Some(stop) < seek_segment.start() || buffer_ends_at_start_of_segment {
-                return Ok(false);
+                return Ok(());
             } else if seek_segment.stop().is_some() && Some(start) >= seek_segment.stop()
                 || buffer_starts_at_end_of_segment
             {
+                if check_needs_at_least_one_buffer() {
+                    return Ok(());
+                }
+
                 gst::info!(CAT, obj: obj, "Buffer reached end of segment \n{seek_segment:#?} \n {sample:#?} \n");
                 let seek_segment = seek_segment.clone().upcast();
                 state.set_seek_info(SeekInfo::PreviousSeekDone(
                     sample.clone(),
                     Some(seek_segment),
                 ));
-                gst::error!(CAT, obj: obj, "Setting seek_info: {:#?}", state.seek_info);
+                gst::error!(CAT, obj: obj, "[inpoint={:?} - duration={:?}] - Setting seek_info: {:#?}",
+                    obj.inpoint(), obj.duration(), state.seek_info,);
                 state.handled_composition_seek = false;
                 state.nle_seek = None;
                 gst::error!(CAT, obj: obj, "Faking EOS");
@@ -215,13 +243,17 @@ impl SeekHandler {
                     .expect("Can't have a NONE segment.stop in reverse playback")
                 || buffer_starts_at_end_of_segment
             {
-                return Ok(false);
+                return Ok(());
             } else if stop
                 <= seek_segment
                     .start()
                     .expect("Can't have a NONE segment.start in reverse playback")
                 || buffer_starts_at_end_of_segment
             {
+                if check_needs_at_least_one_buffer() {
+                    return Ok(());
+                }
+
                 gst::info!(CAT, obj: obj, "Buffer reached end of segment {seek_segment:?}");
                 let seek_segment = seek_segment.clone().upcast();
                 state.set_seek_info(SeekInfo::PreviousSeekDone(
@@ -236,7 +268,7 @@ impl SeekHandler {
             }
         }
 
-        Ok(false)
+        Ok(())
     }
 
     pub(crate) fn get_eos_sample(
@@ -379,7 +411,7 @@ impl SeekHandler {
             state.set_seek_info(seek_info);
         }
 
-        let res = state.seek_info.clone();
+        let mut res = state.seek_info.clone();
         let seqnum = state.nle_seek.as_ref().map(|s| s.seqnum());
         drop(state);
 
@@ -389,10 +421,10 @@ impl SeekHandler {
         }
 
         if let SeekInfo::SeekSegment(seqnum, segment) = &res {
-            self.remap_segment(obj, seqnum, segment, sample.segment().cloned())
-        } else {
-            Ok(res)
+            res = self.remap_segment(obj, seqnum, segment, sample.segment().cloned())?;
+            self.state.lock().unwrap().pushed_buffer_in_segment = true;
         }
+        Ok(res)
     }
 
     pub(crate) fn handle_nlecomposition_seek(
