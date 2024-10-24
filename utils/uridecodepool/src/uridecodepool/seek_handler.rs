@@ -12,10 +12,18 @@ pub(crate) struct SeekHandler {
     name: String,
 }
 
+#[derive(Debug)]
+struct RemappedSegment {
+    sample_segment: gst::FormattedSegment<gst::ClockTime>,
+    remapped_segment: gst::Segment,
+}
+
 #[derive(Debug, Default)]
 struct State {
     stream_time: Option<gst::ClockTime>,
     seek_info: SeekInfo,
+
+    last_remapped_segment: Option<RemappedSegment>,
 
     // Seek event received from NLE while relinking stack
     nle_seek: Option<gst::Event>,
@@ -27,10 +35,15 @@ struct State {
 }
 
 impl State {
+    fn set_seek_info(&mut self, seek_info: SeekInfo) {
+        self.seek_info = seek_info;
+        self.last_remapped_segment = None;
+    }
+
     fn reset(&mut self, obj: &glib::Object) {
         gst::debug!(CAT, obj: obj, "Resetting seek state");
         self.stream_time = None;
-        self.seek_info = SeekInfo::None;
+        self.set_seek_info(SeekInfo::None);
         self.handled_composition_seek = false;
         self.nle_seek = None;
         if let (Some(pad), Some(probe_id)) = (self.pad_probe.upgrade(), self.probe_id.take()) {
@@ -183,9 +196,12 @@ impl SeekHandler {
                 || buffer_starts_at_end_of_segment
             {
                 gst::info!(CAT, obj: obj, "Buffer reached end of segment \n{seek_segment:#?} \n {sample:#?} \n");
-                state.seek_info =
-                    SeekInfo::PreviousSeekDone(sample.clone(), Some(seek_segment.clone().upcast()));
-                gst::error!(CAT, obj: obj, "Setting {} seek_info: {:?}", self.name, state.seek_info);
+                let seek_segment = seek_segment.clone().upcast();
+                state.set_seek_info(SeekInfo::PreviousSeekDone(
+                    sample.clone(),
+                    Some(seek_segment),
+                ));
+                gst::error!(CAT, obj: obj, "Setting seek_info: {:#?}", state.seek_info);
                 state.handled_composition_seek = false;
                 state.nle_seek = None;
                 gst::error!(CAT, obj: obj, "Faking EOS");
@@ -207,8 +223,11 @@ impl SeekHandler {
                 || buffer_starts_at_end_of_segment
             {
                 gst::info!(CAT, obj: obj, "Buffer reached end of segment {seek_segment:?}");
-                state.seek_info =
-                    SeekInfo::PreviousSeekDone(sample.clone(), Some(seek_segment.clone().upcast()));
+                let seek_segment = seek_segment.clone().upcast();
+                state.set_seek_info(SeekInfo::PreviousSeekDone(
+                    sample.clone(),
+                    Some(seek_segment),
+                ));
                 gst::error!(CAT, obj: obj, "Setting {} seek_info: {:?}", self.name, state.seek_info);
                 state.handled_composition_seek = false;
                 state.nle_seek = None;
@@ -240,6 +259,81 @@ impl SeekHandler {
         }
     }
 
+    fn remap_segment(
+        &self,
+        obj: &super::UriDecodePoolSrc,
+        seqnum: &gst::Seqnum,
+        seek_segment: &gst::Segment,
+        sample_segment: Option<gst::Segment>,
+    ) -> Result<SeekInfo, (gst::FlowError, Option<gst::Seqnum>)> {
+        let sample_segment = if let Some(sample_segment) = sample_segment {
+            sample_segment.downcast::<gst::ClockTime>().map_err(|err| {
+                gst::error!(CAT, obj: obj, "Invalid sample segment format: ({err:?}");
+                (gst::FlowError::Error, None)
+            })?
+        } else {
+            gst::warning!(CAT, obj: obj, "No segment on the sample??");
+            return Ok(SeekInfo::SeekSegment(*seqnum, seek_segment.clone()));
+        };
+
+        if let Some(last_remapped_segment) =
+            self.state.lock().unwrap().last_remapped_segment.as_ref()
+        {
+            if last_remapped_segment.sample_segment == sample_segment {
+                return Ok(SeekInfo::SeekSegment(
+                    *seqnum,
+                    last_remapped_segment.remapped_segment.clone(),
+                ));
+            }
+        }
+
+        let seek_segment_time = seek_segment
+            .downcast_ref::<gst::ClockTime>()
+            .expect("Seek segment should have been checked already!");
+
+        if seek_segment_time == &sample_segment {
+            return Ok(SeekInfo::SeekSegment(*seqnum, seek_segment.clone()));
+        }
+
+        assert_eq!(
+            seek_segment_time.rate(),
+            sample_segment.rate(),
+            "Underlying pipelines should produce the same rate as expected seek!"
+        );
+
+        let start_target = gst::Signed::Positive(obj.inpoint().expect("We can't have None duration here as we are in the case where we have a valid nle seek segment!"));
+        let duration_target = gst::Signed::Positive(obj.duration().expect("We can't have None duration here as we are in the case where we have a valid nle seek segment!"));
+        let seek_segment_start = gst::Signed::Positive(seek_segment_time.start().unwrap());
+        let seek_segment_stop = gst::Signed::Positive(seek_segment_time.stop().unwrap());
+
+        let start_diff = start_target - seek_segment_start;
+        let stop_diff = start_target + duration_target - seek_segment_stop;
+
+        let sample_start = gst::Signed::Positive(sample_segment.start().unwrap());
+        let sample_stop = gst::Signed::Positive(sample_segment.stop().unwrap());
+
+        let new_start = match sample_start - start_diff {
+            gst::Signed::Positive(new_start) => new_start,
+            gst::Signed::Negative(_) => sample_start.positive().unwrap(),
+        };
+        let new_stop = match sample_stop - stop_diff {
+            gst::Signed::Positive(new_stop) => new_stop,
+            gst::Signed::Negative(_) => sample_stop.positive().unwrap(),
+        };
+
+        let mut segment = seek_segment.clone();
+        segment.set_start(new_start);
+        segment.set_stop(new_stop);
+
+        gst::error!(CAT, obj: obj, "sample segment: {sample_segment:#?} - seek_segment {seek_segment:#?} -> remapped_segment: {segment:#?}");
+        self.state.lock().unwrap().last_remapped_segment = Some(RemappedSegment {
+            sample_segment,
+            remapped_segment: segment.clone(),
+        });
+
+        Ok(SeekInfo::SeekSegment(*seqnum, segment))
+    }
+
     pub(crate) fn process(
         &self,
         obj: &super::UriDecodePoolSrc,
@@ -249,7 +343,10 @@ impl SeekHandler {
 
         gst::log!(CAT, obj: obj, "nle_seek: {:?} -- handled? {:?}", state.nle_seek, state.handled_composition_seek);
         if state.nle_seek.is_some() && !state.handled_composition_seek {
-            state.seek_info = SeekInfo::PreviousSeekDone(sample.clone(), sample.segment().cloned());
+            state.set_seek_info(SeekInfo::PreviousSeekDone(
+                sample.clone(),
+                sample.segment().cloned(),
+            ));
             drop(state);
 
             gst::info!(CAT, obj: obj, "Force unblocking the nlecompositon by sending EOS, keeping sample around");
@@ -265,7 +362,7 @@ impl SeekHandler {
         }
 
         if matches!(state.seek_info, SeekInfo::PreviousSeekDone(_, _)) {
-            if let Some(nle_seek) = state.nle_seek.as_ref() {
+            let seek_info = if let Some(nle_seek) = state.nle_seek.as_ref() {
                 let (rate, flags, start_type, start, stop_type, stop) =
                     if let gst::EventView::Seek(s) = nle_seek.view() {
                         s.get()
@@ -275,12 +372,11 @@ impl SeekHandler {
                 let mut segment = gst::FormattedSegment::<gst::ClockTime>::new().upcast();
                 segment.do_seek(rate, flags, start_type, start, stop_type, stop);
 
-                state.seek_info = SeekInfo::SeekSegment(nle_seek.seqnum(), segment);
-                gst::info!(CAT, obj: obj, "Setting {} seek_info: {:?}", self.name, state.seek_info);
+                SeekInfo::SeekSegment(nle_seek.seqnum(), segment)
             } else {
-                state.seek_info = SeekInfo::None;
-                gst::info!(CAT, obj: obj, "Setting {} seek_info: {:?}", self.name, state.seek_info);
-            }
+                SeekInfo::None
+            };
+            state.set_seek_info(seek_info);
         }
 
         let res = state.seek_info.clone();
@@ -292,7 +388,11 @@ impl SeekHandler {
             return Err((gst::FlowError::Eos, seqnum));
         }
 
-        Ok(res)
+        if let SeekInfo::SeekSegment(seqnum, segment) = &res {
+            self.remap_segment(obj, seqnum, segment, sample.segment().cloned())
+        } else {
+            Ok(res)
+        }
     }
 
     pub(crate) fn handle_nlecomposition_seek(
@@ -368,12 +468,12 @@ impl SeekHandler {
             if obj.reverse() {
                 if seek_stop != segment.start() {
                     gst::info!(CAT, obj: obj, "Reverse playback but start != previous start, not using default segment");
-                    state.seek_info = SeekInfo::None;
+                    state.set_seek_info(SeekInfo::None);
                     return NleCompositionSeekResult::Unexpected;
                 }
             } else if seek_start != segment.stop() {
                 gst::info!(CAT, obj: obj, "Forward playback but start != previous stop, not using default segment");
-                state.seek_info = SeekInfo::None;
+                state.set_seek_info(SeekInfo::None);
                 return NleCompositionSeekResult::Unexpected;
             }
         } else {
@@ -415,7 +515,7 @@ impl SeekHandler {
 
         if nle_seek.is_none() || state.handled_composition_seek {
             gst::info!(CAT, obj: obj, "Not expecting any NLE seek, forward: {:?}", seek);
-            state.seek_info = SeekInfo::None;
+            state.set_seek_info(SeekInfo::None);
             return false;
         }
 
@@ -425,7 +525,7 @@ impl SeekHandler {
                 nle_seek.as_ref().map(|s| s.seqnum()),
                 seek_event.seqnum());
             state.nle_seek = None;
-            state.seek_info = SeekInfo::None;
+            state.set_seek_info(SeekInfo::None);
             state.handled_composition_seek = false;
             return false;
         }
@@ -440,7 +540,7 @@ impl SeekHandler {
         let mut segment = gst::FormattedSegment::<gst::ClockTime>::new().upcast();
         segment.do_seek(rate, flags, start_type, start, stop_type, stop);
         if !matches!(state.seek_info, SeekInfo::PreviousSeekDone(_, _)) {
-            state.seek_info = SeekInfo::SeekSegment(seek_event.seqnum(), segment);
+            state.set_seek_info(SeekInfo::SeekSegment(seek_event.seqnum(), segment));
         }
         gst::error!(CAT, obj: obj, "Setting {} seek_info: {:?}", self.name, state.seek_info);
         drop(state);
@@ -471,7 +571,7 @@ impl SeekHandler {
                     segment.do_seek(rate, flags, start_type, start, stop_type, stop);
 
                     if !matches!(state.seek_info, SeekInfo::PreviousSeekDone(_, _)) {
-                        state.seek_info = SeekInfo::SeekSegment(seek_event.seqnum(), segment);
+                        state.set_seek_info(SeekInfo::SeekSegment(seek_event.seqnum(), segment));
                     }
                     gst::debug!(CAT, obj: obj, "Setting {} seek_info: {:?}", self.name, state.seek_info);
                 } else {
@@ -484,7 +584,7 @@ impl SeekHandler {
                     );
                     state.handled_composition_seek = false;
                     state.nle_seek = None;
-                    state.seek_info = SeekInfo::None;
+                    state.set_seek_info(SeekInfo::None);
                 }
             }
         }
