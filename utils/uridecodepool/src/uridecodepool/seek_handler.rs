@@ -85,7 +85,7 @@ impl SeekHandler {
         let mut state = self.state.lock().unwrap();
 
         state.reset(obj);
-        gst::error!(CAT, obj: obj, "Setting {} seek_info: {:?}", self.name, state.seek_info);
+        gst::debug!(CAT, obj: obj, "Setting {} seek_info: {:?}", self.name, state.seek_info);
     }
 
     pub(crate) fn has_eos_sample(&self) -> bool {
@@ -95,7 +95,7 @@ impl SeekHandler {
         );
 
         if res {
-            gst::error!(CAT, "{} has eos sample", self.name);
+            gst::debug!(CAT, "{} has eos sample", self.name);
         }
 
         res
@@ -228,11 +228,11 @@ impl SeekHandler {
                     sample.clone(),
                     Some(seek_segment),
                 ));
-                gst::error!(CAT, obj: obj, "[inpoint={:?} - duration={:?}] - Setting seek_info: {:#?}",
+                gst::debug!(CAT, obj: obj, "[inpoint={:?} - duration={:?}] - Setting seek_info: {:#?}",
                     obj.inpoint(), obj.duration(), state.seek_info,);
                 state.handled_composition_seek = false;
                 state.nle_seek = None;
-                gst::error!(CAT, obj: obj, "Faking EOS");
+                gst::info!(CAT, obj: obj, "Faking EOS");
                 return Err(gst::FlowError::Eos);
             }
         } else {
@@ -260,10 +260,11 @@ impl SeekHandler {
                     sample.clone(),
                     Some(seek_segment),
                 ));
-                gst::error!(CAT, obj: obj, "Setting {} seek_info: {:?}", self.name, state.seek_info);
+                gst::debug!(CAT, obj: obj, "[inpoint={:?} - duration={:?}] - Setting seek_info: {:#?}",
+                    obj.inpoint(), obj.duration(), state.seek_info,);
                 state.handled_composition_seek = false;
                 state.nle_seek = None;
-                gst::error!(CAT, obj: obj, "Faking EOS");
+                gst::info!(CAT, obj: obj, "Faking EOS");
                 return Err(gst::FlowError::Eos);
             }
         }
@@ -357,7 +358,7 @@ impl SeekHandler {
         segment.set_start(new_start);
         segment.set_stop(new_stop);
 
-        gst::error!(CAT, obj: obj, "sample segment: {sample_segment:#?} - seek_segment {seek_segment:#?} -> remapped_segment: {segment:#?}");
+        gst::info!(CAT, obj: obj, "sample segment: {sample_segment:#?} - seek_segment {seek_segment:#?} -> remapped_segment: {segment:#?}");
         self.state.lock().unwrap().last_remapped_segment = Some(RemappedSegment {
             sample_segment,
             remapped_segment: segment.clone(),
@@ -375,6 +376,7 @@ impl SeekHandler {
 
         gst::log!(CAT, obj: obj, "nle_seek: {:?} -- handled? {:?}", state.nle_seek, state.handled_composition_seek);
         if state.nle_seek.is_some() && !state.handled_composition_seek {
+            gst::error!(CAT, obj: obj, "This should no happen anymore.");
             state.set_seek_info(SeekInfo::PreviousSeekDone(
                 sample.clone(),
                 sample.segment().cloned(),
@@ -389,7 +391,7 @@ impl SeekHandler {
                 }
             }
 
-            gst::error!(CAT, obj: obj, "Faking EOS before starting");
+            gst::info!(CAT, obj: obj, "Faking EOS before starting");
             return Err((gst::FlowError::Eos, None));
         }
 
@@ -416,7 +418,6 @@ impl SeekHandler {
         drop(state);
 
         if let Err(gst::FlowError::Eos) = self.check_eos(obj, sample) {
-            gst::error!(CAT, obj: obj, "-=----> EOS!");
             return Err((gst::FlowError::Eos, seqnum));
         }
 
@@ -483,11 +484,11 @@ impl SeekHandler {
                             pipeline is a nested timeline");
                 let seqnum = seek.seqnum();
 
-                gst::error!(CAT, obj: obj, "Force using seqnum {seqnum:?}");
+                gst::info!(CAT, obj: obj, "Force using seqnum {seqnum:?}");
                 return NleCompositionSeekResult::UseSeqnum(seqnum);
             }
 
-            gst::error!(CAT, obj: obj, "We had no initial seek and an unexpected seek");
+            gst::info!(CAT, obj: obj, "We had no initial seek and an unexpected seek");
             return NleCompositionSeekResult::Unexpected;
         }
 
@@ -515,20 +516,20 @@ impl SeekHandler {
             );
             if obj.reverse() {
                 if seek_stop != Some(outpoint) {
-                    gst::error!(CAT, obj: obj, "Reverse playback but stop != inpoint + duration, not using default segment");
+                    gst::info!(CAT, obj: obj, "Reverse playback but stop != inpoint + duration, not using default segment");
                     return NleCompositionSeekResult::Unexpected;
                 }
 
                 if seek_stop > Some(inpoint) {
-                    gst::error!(CAT, obj: obj, "Reverse playback but start > inpoint, not using default segment");
+                    gst::info!(CAT, obj: obj, "Reverse playback but start > inpoint, not using default segment");
                     return NleCompositionSeekResult::Unexpected;
                 }
             } else if seek_start != Some(inpoint) {
-                gst::error!(CAT, obj: obj, "seek_start({seek_start:?}) != inpoint({inpoint:?}), not using default segment");
+                gst::info!(CAT, obj: obj, "seek_start({seek_start:?}) != inpoint({inpoint:?}), not using default segment");
                 return NleCompositionSeekResult::Unexpected;
             }
 
-            gst::error!(CAT, obj: obj, "{} seek_start({seek_start:?}) ================================= inpoint({inpoint:?}), USING default segment",
+            gst::info!(CAT, obj: obj, "{} seek_start({seek_start:?}) = inpoint({inpoint:?}), USING default segment",
                 obj.imp().decoderpipe().unwrap().name());
         }
         state.nle_seek = Some(seek.clone());
@@ -574,7 +575,7 @@ impl SeekHandler {
         if !matches!(state.seek_info, SeekInfo::PreviousSeekDone(_, _)) {
             state.set_seek_info(SeekInfo::SeekSegment(seek_event.seqnum(), segment));
         }
-        gst::error!(CAT, obj: obj, "Setting {} seek_info: {:?}", self.name, state.seek_info);
+        gst::debug!(CAT, obj: obj, "Setting {} seek_info: {:?}", self.name, state.seek_info);
         drop(state);
 
         true
@@ -649,7 +650,7 @@ impl SeekHandler {
                 .get::<bool>("nlecomposition-seek")
                 .map_or(false, |v| v)
             {
-                gst::error!(CAT, obj: decoderpipeline, "Not a composition seek event");
+                gst::debug!(CAT, obj: decoderpipeline, "Not a composition seek event");
                 return true;
             }
         } else {
@@ -669,7 +670,7 @@ impl SeekHandler {
                 // Do not send initialization seek to sub timelines!
                 if let Some(is_ges_timeline) = tag.tag().generic("is-ges-timeline") {
                     if is_ges_timeline.get::<bool>().unwrap() {
-                        gst::error!(CAT, obj: decoderpipeline, "Tag with is-ges-timeline NOT SENDING INIT SEEK!");
+                        gst::info!(CAT, obj: decoderpipeline, "Tag with is-ges-timeline, not sending init seek!");
                         return false;
                     }
                 }
@@ -677,7 +678,7 @@ impl SeekHandler {
             i += 1;
         }
 
-        gst::error!(CAT, obj: decoderpipeline, "Sending initialization seek");
+        gst::info!(CAT, obj: decoderpipeline, "Sending initialization seek");
 
         true
     }
