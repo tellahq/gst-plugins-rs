@@ -145,7 +145,7 @@ impl DecoderPipeline {
             .target_src()
             .map(|s| s.create_filter(&*self.obj(), pad))
         {
-            gst::error!(CAT, imp: self, "Got filter: {filter:?}");
+            gst::info!(CAT, imp: self, "Got filter: {filter:?}");
             if let Err(err) = self.pipeline().add(&filter) {
                 gst::error!(CAT, imp: self, "Failed to add filter: {:?}", err);
                 return;
@@ -282,7 +282,7 @@ impl DecoderPipeline {
 
             let (res, current_state, pending_state) =
                 self.pipeline_ref().state(Some(gst::ClockTime::ZERO));
-            gst::error!(CAT, obj: self.pipeline_ref(), "{:?} Current state: {:?}", state.target_src, state);
+            gst::debug!(CAT, obj: self.pipeline_ref(), "{:?} Current state: {:?}", state.target_src, state);
             match res {
                 Ok(_) => {
                     if current_state != gst::State::Playing {
@@ -477,15 +477,15 @@ impl DecoderPipeline {
                 if this.seek_handler().should_send_seek(&seek_event, &*this.obj()) {
                     seek_event
                 } else {
-                    gst::error!(CAT, obj: pipeline, "asked not to discard seek {seek_event:?}");
+                    gst::info!(CAT, obj: pipeline, "asked not to discard seek {seek_event:?}");
                     return;
                 }
             } else {
-                gst::error!(CAT, obj: pipeline, "--> No pending seek");
+                gst::info!(CAT, obj: pipeline, "--> No pending seek");
                 return;
             };
 
-            gst::error!(CAT, obj: pipeline, "--> Sending pending seek {:?}", seek_event.seqnum());
+            gst::info!(CAT, obj: pipeline, "--> Sending pending seek {:?}", seek_event.seqnum());
             drop(state);
 
             if !pipeline.send_event(seek_event) {
