@@ -335,12 +335,11 @@ impl SeekHandler {
         );
 
         let start_target = gst::Signed::Positive(obj.inpoint().expect("We can't have None duration here as we are in the case where we have a valid nle seek segment!"));
-        let duration_target = gst::Signed::Positive(obj.duration().expect("We can't have None duration here as we are in the case where we have a valid nle seek segment!"));
         let seek_segment_start = gst::Signed::Positive(seek_segment_time.start().unwrap());
         let seek_segment_stop = gst::Signed::Positive(seek_segment_time.stop().unwrap());
 
         let start_diff = start_target - seek_segment_start;
-        let stop_diff = start_target + duration_target - seek_segment_stop;
+        let seek_segment_duration = (seek_segment_stop - seek_segment_start).positive().unwrap();
 
         let sample_start = gst::Signed::Positive(sample_segment.start().unwrap());
         let sample_stop = gst::Signed::Positive(sample_segment.stop().unwrap());
@@ -349,16 +348,13 @@ impl SeekHandler {
             gst::Signed::Positive(new_start) => new_start,
             gst::Signed::Negative(_) => sample_start.positive().unwrap(),
         };
-        let new_stop = match sample_stop - stop_diff {
-            gst::Signed::Positive(new_stop) => new_stop,
-            gst::Signed::Negative(_) => sample_stop.positive().unwrap(),
-        };
+        let new_stop = sample_start.positive().unwrap() + seek_segment_duration;
 
         let mut segment = seek_segment.clone();
         segment.set_start(new_start);
         segment.set_stop(new_stop);
 
-        gst::info!(CAT, obj: obj, "sample segment: {sample_segment:#?} - seek_segment {seek_segment:#?} -> remapped_segment: {segment:#?}");
+        gst::info!(CAT, obj: obj, "sample segment: {sample_segment:#?} \n seek_segment {seek_segment:#?} \n remapped_segment: {segment:#?}");
         self.state.lock().unwrap().last_remapped_segment = Some(RemappedSegment {
             sample_segment,
             remapped_segment: segment.clone(),
