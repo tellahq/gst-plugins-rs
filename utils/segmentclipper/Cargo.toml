@@ -13,7 +13,6 @@ gst.workspace = true
 gst-base.workspace = true
 gst-audio.workspace = true
 gst-video.workspace = true
-once_cell.workspace = true
 
 [lib]
 name = "gstsegmentclipper"
@@ -42,4 +41,3 @@ import_library = false
 
 [package.metadata.capi.pkg_config]
 requires_private = "gstreamer-1.0, gstreamer-base-1.0, gobject-2.0, glib-2.0, gmodule-2.0"
-
