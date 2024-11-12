@@ -1,3 +1,4 @@
+use glib::ControlFlow;
 // SPDX-License-Identifier: MPL-2.0
 use gst::glib::Properties;
 use gst_base::subclass::prelude::*;
@@ -383,11 +384,11 @@ impl VideoAggregatorImpl for SkiaCompositor {
             let pad = pad.downcast_ref::<SkiaCompositorPad>().unwrap();
             let frame = match pad.prepared_frame(token) {
                 Some(frame) => frame,
-                None => return true,
+                None => return std::ops::ControlFlow::Continue(()),
             };
 
             if pad.alpha() == 0. {
-                return true;
+                return std::ops::ControlFlow::Continue(());
             }
 
             if pads_to_draw.is_empty()
@@ -399,12 +400,12 @@ impl VideoAggregatorImpl for SkiaCompositor {
                 gst::trace!(CAT, imp = self, "Copying frame directly to output buffer");
                 mapped_mem.copy_from_slice(frame.plane_data(0).unwrap());
 
-                return true;
+                return std::ops::ControlFlow::Continue(());
             }
 
             pads_to_draw.push((pad.clone(), frame));
 
-            true
+            std::ops::ControlFlow::Continue(())
         });
 
         let mut surface =
