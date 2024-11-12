@@ -4,7 +4,7 @@ use std::{
     collections::HashMap,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Condvar, Mutex, MutexGuard,
+        Condvar, LazyLock, Mutex, MutexGuard,
     },
 };
 
@@ -13,12 +13,11 @@ use gst::{
     prelude::*,
     subclass::prelude::*,
 };
-use once_cell::sync::Lazy;
 use tokio::runtime;
 
 use super::DecoderPipeline;
 
-pub static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
+pub static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
     gst::DebugCategory::new(
         "uridecodepool",
         gst::DebugColorFlags::FG_YELLOW,
@@ -26,7 +25,7 @@ pub static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
     )
 });
 
-pub static RUNTIME: Lazy<runtime::Runtime> = Lazy::new(|| {
+pub static RUNTIME: LazyLock<runtime::Runtime> = LazyLock::new(|| {
     runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_name("uridecodepool")
@@ -91,7 +90,7 @@ impl ObjectSubclass for UriDecodePool {
 #[glib::derived_properties]
 impl ObjectImpl for UriDecodePool {
     fn signals() -> &'static [glib::subclass::Signal] {
-        static SIGNALS: Lazy<Vec<glib::subclass::Signal>> = Lazy::new(|| {
+        static SIGNALS: LazyLock<Vec<glib::subclass::Signal>> = LazyLock::new(|| {
             vec![
                 glib::subclass::Signal::builder("new-pipeline")
                     .param_types([gst::Pipeline::static_type()])
@@ -143,8 +142,8 @@ impl ObjectImpl for UriDecodePool {
     }
 }
 
-pub(crate) static PIPELINE_POOL_POOL: Lazy<Mutex<super::UriDecodePool>> =
-    Lazy::new(|| Mutex::new(glib::Object::new()));
+pub(crate) static PIPELINE_POOL_POOL: LazyLock<Mutex<super::UriDecodePool>> =
+    LazyLock::new(|| Mutex::new(glib::Object::new()));
 
 impl UriDecodePool {
     fn set_cleanup_timeout(&self, timeout: u64) {
@@ -193,16 +192,11 @@ impl UriDecodePool {
                 pipelines.iter().map(|p| p.name()).collect::<Vec<_>>()
             );
         }
-        gst::log!(
-            CAT,
-            "YAY: Outstandings: {:?}",
-            pipelines.iter().map(|p| p.name()).collect::<Vec<_>>()
-        );
         gst::info!(CAT, "Done deinitializaing");
     }
 
     fn unprepare_pipeline(&self, src: &super::UriDecodePoolSrc) -> bool {
-        gst::debug!(CAT, imp: self, "Unpreparing pipeline for {:?}", src);
+        gst::debug!(CAT, imp = self, "Unpreparing pipeline for {:?}", src);
 
         let mut state = self.state.lock().unwrap();
 
@@ -228,7 +222,13 @@ impl UriDecodePool {
     }
 
     fn prepare_pipeline(&self, src: &super::UriDecodePoolSrc) -> bool {
-        gst::info!(CAT, imp: self, "Preparing pipeline for {}:{:?}", src.name(), src as *const _);
+        gst::info!(
+            CAT,
+            imp = self,
+            "Preparing pipeline for {}:{:?}",
+            src.name(),
+            src as *const _
+        );
 
         let mut state = self.state.lock().unwrap();
 
@@ -263,11 +263,11 @@ impl UriDecodePool {
         }
 
         let decoderpipe = self.get_unused_or_create_pipeline(src, &mut state);
-        gst::debug!(CAT, imp: self, "Starting {decoderpipe:?}");
+        gst::debug!(CAT, imp = self, "Starting {decoderpipe:?}");
         if let Err(err) = decoderpipe.imp().play() {
-            gst::warning!(CAT, imp: self, "Failed to play pipeline: {}", err);
+            gst::warning!(CAT, imp = self, "Failed to play pipeline: {}", err);
             if let Err(e) = decoderpipe.imp().release() {
-                gst::error!(CAT, imp: self, "Failed to release pipeline: {}", e);
+                gst::error!(CAT, imp = self, "Failed to release pipeline: {}", e);
             }
 
             return false;
@@ -296,7 +296,7 @@ impl UriDecodePool {
             let pipeline = pipe.pipeline();
             gst::error!(
                 CAT,
-                obj: pipeline,
+                obj = pipeline,
                 "{} for {} -- {:?}?stream-id{:?} -- {:?}",
                 if pipe.imp().seek_handler().has_eos_sample() {
                     "Reusing already running pipeline to try to keep flow"
@@ -396,8 +396,10 @@ impl UriDecodePool {
                 pipeline.connect_closure(
                     "released",
                     false,
-                    glib::closure!(@watch obj => move
-                        |pipeline: DecoderPipeline| {
+                    glib::closure!(
+                        #[watch]
+                        obj,
+                        move |pipeline: DecoderPipeline| {
                             obj.imp().pipeline_released_cb(pipeline);
                         }
                     ),
@@ -406,9 +408,11 @@ impl UriDecodePool {
                 pipeline.connect_closure(
                     "stopped",
                     false,
-                    glib::closure!(@watch obj => move
-                        |pipeline: DecoderPipeline| {
-                        obj.imp().pipeline_stopped_cb(pipeline);
+                    glib::closure!(
+                        #[watch]
+                        obj,
+                        move |pipeline: DecoderPipeline| {
+                            obj.imp().pipeline_stopped_cb(pipeline);
                         }
                     ),
                 );
@@ -434,7 +438,7 @@ impl UriDecodePool {
     }
 
     fn pipeline_released_cb(&self, pipeline: DecoderPipeline) {
-        gst::log!(CAT, imp: self, "{} released.", pipeline.pipeline().name());
+        gst::log!(CAT, imp = self, "{} released.", pipeline.pipeline().name());
 
         let mut state = self.state.lock().unwrap();
         if state.pooled.contains(&pipeline) {
@@ -448,20 +452,29 @@ impl UriDecodePool {
         }
 
         let cleanup_timeout = self.settings.lock().unwrap().cleanup_timeout;
-        RUNTIME.spawn(glib::clone!(@weak self as this => async move {
-            gst::info!(
-                CAT,
-                "Cleaning up unused pipelines in {:?} seconds",
-                cleanup_timeout
-            );
-            tokio::time::sleep(cleanup_timeout).await;
+        RUNTIME.spawn(glib::clone!(
+            #[weak(rename_to =  this)]
+            self,
+            async move {
+                gst::info!(
+                    CAT,
+                    "Cleaning up unused pipelines in {:?} seconds",
+                    cleanup_timeout
+                );
+                tokio::time::sleep(cleanup_timeout).await;
 
-            this.cleanup();
-        }));
+                this.cleanup();
+            }
+        ));
     }
 
     fn pipeline_stopped_cb(&self, pipeline: DecoderPipeline) {
-        gst::log!(CAT, imp: self, "{} not used stopped.", pipeline.pipeline().name());
+        gst::log!(
+            CAT,
+            imp = self,
+            "{} not used stopped.",
+            pipeline.pipeline().name()
+        );
 
         let mut all_pipelines = self.pipelines.lock().unwrap();
         all_pipelines.retain(|p| p != &pipeline);
@@ -516,8 +529,12 @@ impl UriDecodePool {
             let now = std::time::Instant::now();
             state.defered_release_tasks.insert(pipeline.clone(), now);
 
-            RUNTIME.spawn(
-                glib::clone!(@weak self as this, @weak pipeline => async move {
+            RUNTIME.spawn(glib::clone!(
+                #[weak(rename_to = this)]
+                self,
+                #[weak]
+                pipeline,
+                async move {
                     gst::info!(
                         CAT,
                         "Cleaning up unused pipeline {} in {:?} seconds",
@@ -535,14 +552,17 @@ impl UriDecodePool {
                         return;
                     }
 
-                    if pipeline.imp().target_src().is_none() || this.deinitialized.load(Ordering::SeqCst) {
+                    if pipeline.imp().target_src().is_none()
+                        || this.deinitialized.load(Ordering::SeqCst)
+                    {
                         gst::info!(CAT, "Releasing pipeline {}", pipeline.pipeline().name());
                         if let Some(src) = pipeline.imp().target_src() {
-                            this.obj().emit_by_name::<()>("prepared-pipeline-removed", &[&src]);
+                            this.obj()
+                                .emit_by_name::<()>("prepared-pipeline-removed", &[&src]);
                         }
 
                         if let Err(e) = pipeline.imp().release() {
-                            gst::error!(CAT, imp: this, "Failed to release pipeline: {e:?}");
+                            gst::error!(CAT, imp = this, "Failed to release pipeline: {e:?}");
                         }
 
                         state.defered_release_tasks.remove(&pipeline);
@@ -550,11 +570,15 @@ impl UriDecodePool {
 
                         this.cleanup();
                     } else {
-                        gst::info!(CAT, "Pipeline {} now has a target, not releasing", pipeline.pipeline().name());
+                        gst::info!(
+                            CAT,
+                            "Pipeline {} now has a target, not releasing",
+                            pipeline.pipeline().name()
+                        );
                         state.defered_release_tasks.remove(&pipeline);
                     }
-                })
-            );
+                }
+            ));
 
             return;
         } else {
