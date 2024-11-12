@@ -73,7 +73,7 @@ impl BaseTransformImpl for SegmentClipper {
         let start = if let Some(pts) = inbuf.pts() {
             pts
         } else {
-            gst::warning!(CAT, imp: self, "Dropping buffer without PTS");
+            gst::warning!(CAT, imp = self, "Dropping buffer without PTS");
 
             return Ok(gst_base::BASE_TRANSFORM_FLOW_DROPPED);
         };
@@ -90,7 +90,7 @@ impl BaseTransformImpl for SegmentClipper {
 
         let drop_buffer = |state: &mut State| {
             state.last_dropped_buffer = Some(inbuf.clone());
-            gst::debug!(CAT, imp: self, "Dropping buffer outside segment");
+            gst::debug!(CAT, imp = self, "Dropping buffer outside segment");
 
             Ok(gst_base::BASE_TRANSFORM_FLOW_DROPPED)
         };
@@ -116,7 +116,7 @@ impl BaseTransformImpl for SegmentClipper {
             } else if segment.stop().is_some() && Some(start) >= segment.stop()
                 || buffer_starts_at_end_of_segment
             {
-                gst::debug!(CAT, imp: self, "Buffer reached end of segment {segment:?}");
+                gst::debug!(CAT, imp = self, "Buffer reached end of segment {segment:?}");
                 return Err(gst::FlowError::Eos);
             }
         } else {
@@ -134,7 +134,7 @@ impl BaseTransformImpl for SegmentClipper {
                     .expect("Can't have a NONE segment.start in reverse playback")
                 || buffer_starts_at_end_of_segment
             {
-                gst::debug!(CAT, imp: self, "Buffer reached end of segment");
+                gst::debug!(CAT, imp = self, "Buffer reached end of segment");
                 return Err(gst::FlowError::Eos);
             }
         }
@@ -212,7 +212,7 @@ impl BaseTransformImpl for SegmentClipper {
             None
         };
 
-        gst::debug!(CAT, imp: self, "Received caps: {:?}", caps_struct);
+        gst::debug!(CAT, imp = self, "Received caps: {:?}", caps_struct);
 
         Ok(())
     }
@@ -254,11 +254,19 @@ impl BaseTransformImpl for SegmentClipper {
                     buf.set_pts(segment.stop().unwrap());
                 }
 
-                gst::info!(CAT, imp: self,
+                gst::info!(
+                    CAT,
+                    imp = self,
                     "Got EOS event but did not push any yet although we have received buffers \
-                     push the last buffer we received clipping it to the segment");
+                     push the last buffer we received clipping it to the segment"
+                );
                 if let Err(e) = self.obj().src_pads().first().unwrap().push(last_buffer) {
-                    gst::error!(CAT, imp: self, "Failed to push last dropped buffer: {:?}", e);
+                    gst::error!(
+                        CAT,
+                        imp = self,
+                        "Failed to push last dropped buffer: {:?}",
+                        e
+                    );
                 }
             }
         }
