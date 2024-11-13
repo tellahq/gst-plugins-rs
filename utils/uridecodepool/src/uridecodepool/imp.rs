@@ -816,7 +816,6 @@ impl UriDecodePoolSrc {
             return gst::PadProbeReturn::Drop;
         }
 
-        gst::debug!(CAT, imp: self, "Got segment {new_segment:#?}");
         if let Some(segment) = state.current_segment.clone() {
             let mut builder = gst::event::Segment::builder(
                 new_segment
