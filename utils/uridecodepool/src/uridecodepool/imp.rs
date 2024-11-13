@@ -757,7 +757,6 @@ impl UriDecodePoolSrc {
             return gst::PadProbeReturn::Drop;
         }
 
-        gst::debug!(CAT, imp: self, "Got segment {new_segment:#?}");
         if let Some(segment) = state.current_segment.clone() {
             let mut builder = gst::event::Segment::builder(
                 new_segment
@@ -774,7 +773,11 @@ impl UriDecodePoolSrc {
             }
 
             state.needs_segment = false;
-            probe_info.data = Some(gst::PadProbeData::Event(builder.build()));
+            let segment = builder.build();
+            if let gst::EventView::Segment(seg) = segment.view() {
+                gst::debug!(CAT, imp: self, "Forwarding segment {:#?}", seg);
+            }
+            probe_info.data = Some(gst::PadProbeData::Event(segment));
 
             gst::PadProbeReturn::Ok
         } else {

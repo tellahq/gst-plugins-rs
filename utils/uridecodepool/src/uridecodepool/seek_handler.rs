@@ -348,7 +348,7 @@ impl SeekHandler {
             gst::Signed::Positive(new_start) => new_start,
             gst::Signed::Negative(_) => sample_start.positive().unwrap(),
         };
-        let new_stop = sample_start.positive().unwrap() + seek_segment_duration;
+        let new_stop = new_start + seek_segment_duration;
 
         let mut segment = seek_segment.clone();
         segment.set_start(new_start);
