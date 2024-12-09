@@ -366,7 +366,6 @@ impl SeekHandler {
         let seek_duration = seek_segment_time.stop().unwrap() - seek_segment_time.start().unwrap();
 
         let sample_start = gst::Signed::Positive(sample_segment.start().unwrap());
-        let sample_stop = gst::Signed::Positive(sample_segment.stop().unwrap());
 
         let new_start = match sample_start - start_diff {
             gst::Signed::Positive(new_start) => new_start,
