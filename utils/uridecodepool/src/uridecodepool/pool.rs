@@ -104,7 +104,7 @@ impl ObjectImpl for UriDecodePool {
                     .param_types([super::UriDecodePoolSrc::static_type()])
                     .return_type::<Option<glib::Object>>()
                     .action()
-                    .class_handler(|_, args| {
+                    .class_handler(|args| {
                         let pool = args[0].get::<super::UriDecodePool>().unwrap();
                         let src = args[1].get::<&super::UriDecodePoolSrc>().unwrap();
 
@@ -115,7 +115,7 @@ impl ObjectImpl for UriDecodePool {
                     .param_types([super::UriDecodePoolSrc::static_type()])
                     .return_type::<bool>()
                     .action()
-                    .class_handler(|_, args| {
+                    .class_handler(| args| {
                         let pool = args[0].get::<super::UriDecodePool>().unwrap();
                         let src = args[1].get::<&super::UriDecodePoolSrc>().unwrap();
 
@@ -130,7 +130,7 @@ impl ObjectImpl for UriDecodePool {
                  */
                 glib::subclass::Signal::builder("deinit")
                     .action()
-                    .class_handler(|_, args| {
+                    .class_handler(| args| {
                         let pool = args[0].get::<super::UriDecodePool>().unwrap();
 
                         pool.imp().deinit();

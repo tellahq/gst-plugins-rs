@@ -7251,7 +7251,7 @@ version = "0.78.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f15700ac678c06649077495acbba07e7ae01e5ca46b7dc18213f2c3477ada71"
 dependencies = [
- "bitflags 2.6.0",
+ "bitflags 2.8.0",
  "lazy_static",
  "skia-bindings",
 ]
