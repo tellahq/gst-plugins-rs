@@ -724,31 +724,30 @@ impl ObjectImpl for DecoderPipeline {
 
         let uridecodebin = gst::ElementFactory::make("uridecodebin3")
             .property("instant-uri", true)
-            .property("name", format!("dbin-{}", self.name()))
             .build()
             .expect("Failed to create uridecodebin")
             .downcast::<gst::Bin>()
             .unwrap();
 
-        // FIXME - in multiqueue fix the logic for pushing on unlinked pads
-        // so it doesn't wait forever in many of our case.
-        // We do not care about unlinked pads streams ourselves!
+        // We always only expose 1 single stream, so we do not need multiqueue to track streams
+        // running times and care about interleaving
+        let configure_multiqueue = |mq: &gst::Element| {
+            mq.set_property("sync-by-running-time", false);
+            mq.set_property("use-interleave", false);
+        };
+        for element in uridecodebin
+            .iterate_all_by_element_factory_name("multiqueue")
+            .into_iter()
+            .flatten()
         {
-            for element in uridecodebin
-                .iterate_all_by_element_factory_name("multiqueue")
-                .into_iter()
-                .flatten()
-            {
-                element.set_property("unlinked-cache-time", gst::ClockTime::from_seconds(86400));
-            }
-
-            uridecodebin.connect_deep_element_added(|_, _, element| {
-                if element.factory() == gst::ElementFactory::find("multiqueue") {
-                    element
-                        .set_property("unlinked-cache-time", gst::ClockTime::from_seconds(86400));
-                }
-            });
+            configure_multiqueue(&element);
         }
+
+        uridecodebin.connect_deep_element_added(move |_, _, element| {
+            if element.factory() == gst::ElementFactory::find("multiqueue") {
+                configure_multiqueue(element);
+            }
+        });
 
         self.seek_handler
             .set(SeekHandler::new(self.name()))
