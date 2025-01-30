@@ -179,7 +179,7 @@ impl ObjectImpl for MemoryTracer {
             vec![glib::subclass::Signal::builder("write-log")
                 .action()
                 .param_types([Option::<String>::static_type()])
-                .class_handler(|_, args| {
+                .class_handler(|args| {
                     let obj = args[0].get::<super::MemoryTracer>().unwrap();
                     let obj = args[0].get::<super::MemoryTracer>().unwrap();
 
