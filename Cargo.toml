@@ -147,22 +147,22 @@ gtk = { package = "gtk4", git = "https://github.com/gtk-rs/gtk4-rs", branch = "m
 gdk-wayland = { package = "gdk4-wayland", git = "https://github.com/gtk-rs/gtk4-rs", branch = "main", features = ["v4_4"]}
 gdk-x11 = { package = "gdk4-x11", git = "https://github.com/gtk-rs/gtk4-rs", branch = "main", features = ["v4_4"]}
 gdk-win32 = { package = "gdk4-win32", git = "https://github.com/gtk-rs/gtk4-rs", branch = "main", features = ["v4_4"]}
-gst = { package = "gstreamer", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "sequence_1.25.1" }
-gst-allocators = { package = "gstreamer-allocators", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "sequence_1.25.1" }
-gst-analytics = { package = "gstreamer-analytics", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "sequence_1.25.1" }
-gst-app = { package = "gstreamer-app", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "sequence_1.25.1" }
-gst-audio = { package = "gstreamer-audio", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "sequence_1.25.1" }
-gst-base = { package = "gstreamer-base", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "sequence_1.25.1" }
-gst-check = { package = "gstreamer-check", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "sequence_1.25.1" }
-gst-gl = { package = "gstreamer-gl", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "sequence_1.25.1" }
-gst-gl-egl = { package = "gstreamer-gl-egl", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "sequence_1.25.1" }
-gst-gl-wayland = { package = "gstreamer-gl-wayland", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "sequence_1.25.1" }
-gst-gl-x11 = { package = "gstreamer-gl-x11", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "sequence_1.25.1" }
-gst-net = { package = "gstreamer-net", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "sequence_1.25.1" }
-gst-pbutils = { package = "gstreamer-pbutils", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "sequence_1.25.1" }
+gst = { package = "gstreamer", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "tla_1.25.1+sq" }
+gst-allocators = { package = "gstreamer-allocators", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "tla_1.25.1+sq" }
+gst-analytics = { package = "gstreamer-analytics", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "tla_1.25.1+sq" }
+gst-app = { package = "gstreamer-app", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "tla_1.25.1+sq" }
+gst-audio = { package = "gstreamer-audio", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "tla_1.25.1+sq" }
+gst-base = { package = "gstreamer-base", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "tla_1.25.1+sq" }
+gst-check = { package = "gstreamer-check", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "tla_1.25.1+sq" }
+gst-gl = { package = "gstreamer-gl", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "tla_1.25.1+sq" }
+gst-gl-egl = { package = "gstreamer-gl-egl", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "tla_1.25.1+sq" }
+gst-gl-wayland = { package = "gstreamer-gl-wayland", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "tla_1.25.1+sq" }
+gst-gl-x11 = { package = "gstreamer-gl-x11", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "tla_1.25.1+sq" }
+gst-net = { package = "gstreamer-net", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "tla_1.25.1+sq" }
+gst-pbutils = { package = "gstreamer-pbutils", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "tla_1.25.1+sq" }
 gst-plugin-version-helper = { path = "./version-helper" }
-gst-rtp = { package = "gstreamer-rtp", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "sequence_1.25.1" }
-gst-sdp = { package = "gstreamer-sdp", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "sequence_1.25.1" }
-gst-utils = { package = "gstreamer-utils", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "sequence_1.25.1" }
-gst-video = { package = "gstreamer-video", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "sequence_1.25.1" }
-gst-webrtc = { package = "gstreamer-webrtc", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "sequence_1.25.1" }
+gst-rtp = { package = "gstreamer-rtp", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "tla_1.25.1+sq" }
+gst-sdp = { package = "gstreamer-sdp", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "tla_1.25.1+sq" }
+gst-utils = { package = "gstreamer-utils", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "tla_1.25.1+sq" }
+gst-video = { package = "gstreamer-video", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "tla_1.25.1+sq" }
+gst-webrtc = { package = "gstreamer-webrtc", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "tla_1.25.1+sq" }
