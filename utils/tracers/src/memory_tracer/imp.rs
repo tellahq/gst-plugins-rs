@@ -234,3 +234,4 @@ impl TracerImpl for MemoryTracer {
 }
 
 impl GstObjectImpl for MemoryTracer {}
+
