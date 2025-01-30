@@ -15,13 +15,13 @@ use gst::glib;
 use gst::glib::translate::ToGlibPtr;
 use gst::prelude::*;
 use gst::subclass::prelude::*;
-use once_cell::sync::Lazy;
 use regex::Regex;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::LazyLock;
 use std::sync::{Arc, Mutex};
 
-static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
+static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
     gst::DebugCategory::new(
         "memory-tracer",
         gst::DebugColorFlags::empty(),
@@ -71,13 +71,13 @@ impl Settings {
         }
 
         if let Ok(filter) = s.get::<&str>("include-filter") {
-            gst::log!(CAT, imp: imp, "include filter= {}", filter);
+            gst::log!(CAT, imp = imp, "include filter= {}", filter);
             let filter = match Regex::new(filter) {
                 Ok(filter) => Some(filter),
                 Err(err) => {
                     gst::error!(
                         CAT,
-                        imp: imp,
+                        imp = imp,
                         "Failed to compile include-filter regex: {}",
                         err
                     );
@@ -88,13 +88,13 @@ impl Settings {
         }
 
         if let Ok(filter) = s.get::<&str>("exclude-filter") {
-            gst::log!(CAT, imp: imp, "exclude filter= {}", filter);
+            gst::log!(CAT, imp = imp, "exclude filter= {}", filter);
             let filter = match Regex::new(filter) {
                 Ok(filter) => Some(filter),
                 Err(err) => {
                     gst::error!(
                         CAT,
-                        imp: imp,
+                        imp = imp,
                         "Failed to compile exclude-filter regex: {}",
                         err
                     );
@@ -145,17 +145,12 @@ impl MemoryTracer {
         ) {
             Ok(file) => file,
             Err(err) => {
-                gst::error!(CAT, imp: self, "Failed to create file: {err}");
+                gst::error!(CAT, imp = self, "Failed to create file: {err}");
                 return;
             }
         };
 
-        gst::error!(
-            CAT,
-            imp: self,
-            "Writing file {:?}",
-            file
-        );
+        gst::error!(CAT, imp = self, "Writing file {:?}", file);
 
         let log = std::mem::replace(&mut state.log, Vec::new());
         state.logs_written = true;
@@ -172,7 +167,7 @@ impl MemoryTracer {
                 event.memory_type,
                 event.size
             ) {
-                gst::error!(CAT, imp: self, "Failed to write to file: {err}");
+                gst::error!(CAT, imp = self, "Failed to write to file: {err}");
             }
         }
     }
@@ -180,7 +175,7 @@ impl MemoryTracer {
 
 impl ObjectImpl for MemoryTracer {
     fn signals() -> &'static [glib::subclass::Signal] {
-        static SIGNALS: Lazy<Vec<glib::subclass::Signal>> = Lazy::new(|| {
+        static SIGNALS: LazyLock<Vec<glib::subclass::Signal>> = LazyLock::new(|| {
             vec![glib::subclass::Signal::builder("write-log")
                 .action()
                 .param_types([Option::<String>::static_type()])
