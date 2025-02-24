@@ -527,6 +527,7 @@ impl UriDecodePool {
 
         let pipeline_imp = pipeline.imp();
         if pipeline_imp.seek_handler().has_eos_sample() {
+            pipeline_imp.set_target_src(None);
             let mut cleanup_timeout = self.settings.lock().unwrap().cleanup_timeout;
 
             // FIXME: Find a better way to handle keeping the pipeline with fake EOS around
