@@ -294,7 +294,7 @@ impl UriDecodePool {
                 .emit_by_name::<()>("prepared-pipeline-removed", &[&src]);
 
             let pipeline = pipe.pipeline();
-            gst::error!(
+            gst::debug!(
                 CAT,
                 obj = pipeline,
                 "{} for {} -- {:?}?stream-id{:?} -- {:?}",

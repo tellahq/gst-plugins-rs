@@ -401,7 +401,7 @@ impl DecoderPipeline {
 
                         Some(stream)
                     } else {
-                        gst::warning!(
+                        gst::debug!(
                             CAT,
                             obj = self.pipeline_ref(),
                             "{:?} requested stream {} not found in {} - available: {:?}",
