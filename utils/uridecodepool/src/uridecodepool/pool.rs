@@ -16,6 +16,7 @@ use gst::{
 use tokio::runtime;
 
 use crate::uridecodepool::decoderpipeline;
+use crate::uridecodepool::decoderpipeline::TargetSrcState;
 
 use super::DecoderPipeline;
 
@@ -172,7 +173,8 @@ impl UriDecodePool {
         for pipeline in all_pipelines.into_iter() {
             let imp = pipeline.imp();
 
-            if let Some(src) = imp.target_src() {
+            let src_opt: Option<super::UriDecodePoolSrc> = imp.target_src().into();
+            if let Some(src) = src_opt {
                 obj.emit_by_name::<()>(
                     "prepared-pipeline-removed",
                     &[&src, pipeline.upcast_ref::<glib::Object>()],
@@ -206,7 +208,7 @@ impl UriDecodePool {
         let mut state = self.state.lock().unwrap();
 
         if let Some(position) = state.prepared.iter().position(|p| {
-            p.imp().target_src().as_ref() == Some(src) && !p.seek_handler().has_eos_sample()
+            p.imp().target_src().has_target(src) && !p.seek_handler().has_eos_sample()
         }) {
             let pipeline = state.prepared.remove(position);
             drop(state);
@@ -243,7 +245,7 @@ impl UriDecodePool {
         if state
             .prepared
             .iter()
-            .any(|p| p.imp().target_src().as_ref() == Some(src))
+            .any(|p| p.imp().target_src().has_target(src))
         {
             gst::debug!(
                 CAT,
@@ -258,7 +260,7 @@ impl UriDecodePool {
         if state
             .running
             .iter()
-            .any(|p| p.imp().target_src().as_ref() == Some(src))
+            .any(|p| p.imp().target_src().has_target(src))
         {
             gst::debug!(
                 CAT,
@@ -292,7 +294,7 @@ impl UriDecodePool {
         let (decoderpipe, mut state) = if let Some(position) = state
             .prepared
             .iter()
-            .position(|p| p.imp().target_src().as_ref() == Some(src))
+            .position(|p| p.imp().target_src().is_pending_for(src))
         {
             let pipe = state.prepared.remove(position);
             drop(state);
@@ -303,7 +305,7 @@ impl UriDecodePool {
             );
 
             let pipeline = pipe.pipeline();
-            gst::error!(
+            gst::info!(
                 CAT,
                 obj = pipeline,
                 "{} for {} -- {:?}?stream-id{:?} -- {:?}",
@@ -317,6 +319,7 @@ impl UriDecodePool {
                 src.stream_id(),
                 pipeline.state(gst::ClockTime::ZERO)
             );
+            pipe.imp().mark_target_src_in_use();
 
             (pipe, self.state.lock().unwrap())
         } else {
@@ -442,7 +445,9 @@ impl UriDecodePool {
             },
         );
 
-        decoderpipe.imp().set_target_src(Some(src.clone()));
+        decoderpipe
+            .imp()
+            .set_target_src(TargetSrcState::InUse(src.clone()));
         decoderpipe
     }
 
@@ -527,7 +532,12 @@ impl UriDecodePool {
 
         let pipeline_imp = pipeline.imp();
         if pipeline_imp.seek_handler().has_eos_sample() {
-            pipeline_imp.set_target_src(None);
+            gst::info!(
+                CAT,
+                "Releasing pipeline with EOS sample: {:?}",
+                pipeline_imp.target_src()
+            );
+            pipeline_imp.mark_target_src_pending();
             let mut cleanup_timeout = self.settings.lock().unwrap().cleanup_timeout;
 
             // FIXME: Find a better way to handle keeping the pipeline with fake EOS around
@@ -562,11 +572,10 @@ impl UriDecodePool {
                         return;
                     }
 
-                    if pipeline.imp().target_src().is_none()
-                        || this.deinitialized.load(Ordering::SeqCst)
-                    {
+                    let pending_src = pipeline.imp().target_src().pending_src();
+                    if pending_src.is_some() || this.deinitialized.load(Ordering::SeqCst) {
                         gst::info!(CAT, "Releasing pipeline {}", pipeline.pipeline().name());
-                        if let Some(src) = pipeline.imp().target_src() {
+                        if let Some(src) = pending_src {
                             this.obj()
                                 .emit_by_name::<()>("prepared-pipeline-removed", &[&src]);
                         }
