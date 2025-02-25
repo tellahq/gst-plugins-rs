@@ -14,6 +14,83 @@ use crate::uridecodepool::seek_handler;
 
 use super::{pool::CAT, seek_handler::SeekHandler};
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum TargetSrcState {
+    None,
+    Pending(super::UriDecodePoolSrc),
+    InUse(super::UriDecodePoolSrc),
+}
+
+impl TargetSrcState {
+    pub fn is_none(&self) -> bool {
+        matches!(self, TargetSrcState::None)
+    }
+
+    pub fn unwrap(&self) -> &super::UriDecodePoolSrc {
+        match self {
+            TargetSrcState::InUse(src) | TargetSrcState::Pending(src) => src,
+            _ => panic!("TargetSrcState is None"),
+        }
+    }
+
+    pub fn is_pending_for(&self, src: &super::UriDecodePoolSrc) -> bool {
+        if let TargetSrcState::Pending(pending_src) = self {
+            return pending_src == src;
+        }
+
+        false
+    }
+
+    pub fn has_target(&self, target: &super::UriDecodePoolSrc) -> bool {
+        match self {
+            TargetSrcState::InUse(src) => src == target,
+            _ => false,
+        }
+    }
+
+    pub fn relates_to(&self, src: &super::UriDecodePoolSrc) -> bool {
+        match self {
+            TargetSrcState::InUse(target_src) | TargetSrcState::Pending(target_src) => {
+                target_src == src
+            }
+            TargetSrcState::None => false,
+        }
+    }
+
+    pub fn used_src(&self) -> Option<super::UriDecodePoolSrc> {
+        match self {
+            TargetSrcState::InUse(src) => Some(src.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn pending_src(&self) -> Option<super::UriDecodePoolSrc> {
+        match self {
+            TargetSrcState::Pending(src) => Some(src.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn map<U, F>(self, f: F) -> Option<U>
+    where
+        F: FnOnce(&super::UriDecodePoolSrc) -> U,
+    {
+        match self {
+            TargetSrcState::InUse(src) | TargetSrcState::Pending(src) => Some(f(&src)),
+            _ => None,
+        }
+    }
+}
+
+impl From<TargetSrcState> for Option<super::UriDecodePoolSrc> {
+    fn from(state: TargetSrcState) -> Self {
+        match state {
+            TargetSrcState::InUse(src) | TargetSrcState::Pending(src) => Some(src),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct State {
     stream: Option<gst::Stream>,
@@ -23,7 +100,7 @@ struct State {
     bus_message_sigid: Option<glib::SignalHandlerId>,
     stream_selection_seqnum: gst::Seqnum,
 
-    target_src: Option<super::UriDecodePoolSrc>,
+    target_src: TargetSrcState,
     pending_seek: Option<gst::Event>,
 
     // Seek to be sent to apply inpoint/duration values
@@ -71,7 +148,7 @@ impl Default for DecoderPipeline {
                 stream_selection_seqnum: gst::Seqnum::next(),
                 last_seek_seqnum: gst::Seqnum::next(),
                 bus_message_sigid: None,
-                target_src: None,
+                target_src: TargetSrcState::None,
                 pool: None,
                 pending_seek: None,
                 initial_seek: None,
@@ -501,7 +578,7 @@ impl DecoderPipeline {
                             "Could not post message {message:?}: {e:?}"
                         );
                     }
-                } else if let Some(target) = self.target_src() {
+                } else if let TargetSrcState::InUse(target) = self.target_src() {
                     if let Err(e) = target.post_message(message.to_owned()) {
                         gst::warning!(
                             CAT,
@@ -636,14 +713,39 @@ impl DecoderPipeline {
         self.pipeline_ref().set_state(gst::State::Playing)
     }
 
-    pub(crate) fn target_src(&self) -> Option<super::UriDecodePoolSrc> {
+    pub(crate) fn target_src(&self) -> TargetSrcState {
         self.state.lock().unwrap().target_src.clone()
     }
 
-    pub(crate) fn set_target_src(&self, target_src: Option<super::UriDecodePoolSrc>) {
+    pub(crate) fn mark_target_src_in_use(&self) {
         let mut state = self.state.lock().unwrap();
 
-        if target_src.is_some() {
+        let target_src = state
+            .target_src
+            .pending_src()
+            .expect("No pending src whille trying to mark as in use");
+
+        state.target_src = TargetSrcState::InUse(target_src.clone());
+    }
+
+    pub(crate) fn mark_target_src_pending(&self) {
+        let mut state = self.state.lock().unwrap();
+
+        let target_src = state
+            .target_src
+            .used_src()
+            .expect("No target src whille trying to mark as pendinng");
+
+        state.target_src = TargetSrcState::Pending(target_src.clone());
+    }
+
+    pub(crate) fn set_target_src(&self, target_src: TargetSrcState) {
+        let mut state = self.state.lock().unwrap();
+
+        if matches!(
+            target_src,
+            TargetSrcState::InUse(_) | TargetSrcState::Pending(_)
+        ) {
             state.unused_since = None;
         }
         state.target_src = target_src;
@@ -656,7 +758,7 @@ impl DecoderPipeline {
             "Releasing pipeline {}",
             self.name()
         );
-        self.set_target_src(None);
+        self.set_target_src(TargetSrcState::None);
 
         let obj = self.obj().clone();
         self.pipeline_ref().call_async(move |pipeline| {
