@@ -279,6 +279,14 @@ impl BaseTransformImpl for SegmentClipper {
 
         Ok(())
     }
+
+    fn propose_allocation(
+        &self,
+        _a: Option<&gst::query::Allocation>,
+        _b: &mut gst::query::Allocation,
+    ) -> Result<(), gst::LoggableError> {
+        Ok(())
+    }
 }
 
 impl ObjectImpl for SegmentClipper {}
