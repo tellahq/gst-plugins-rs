@@ -576,8 +576,10 @@ impl UriDecodePool {
                     if pending_src.is_some() || this.deinitialized.load(Ordering::SeqCst) {
                         gst::info!(CAT, "Releasing pipeline {}", pipeline.pipeline().name());
                         if let Some(src) = pending_src {
-                            this.obj()
-                                .emit_by_name::<()>("prepared-pipeline-removed", &[&src]);
+                            this.obj().emit_by_name::<()>(
+                                "prepared-pipeline-removed",
+                                &[&src, pipeline.upcast_ref::<glib::Object>()],
+                            );
                         }
 
                         if let Err(e) = pipeline.imp().release() {
