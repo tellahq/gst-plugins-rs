@@ -385,11 +385,11 @@ impl VideoAggregatorImpl for SkiaCompositor {
             let pad = pad.downcast_ref::<SkiaCompositorPad>().unwrap();
             let frame = match pad.prepared_frame(token) {
                 Some(frame) => frame,
-                None => return std::ops::ControlFlow::Continue(()),
+                None => return true,
             };
 
             if pad.alpha() == 0. {
-                return std::ops::ControlFlow::Continue(());
+                return true;
             }
 
             if pads_to_draw.is_empty()
@@ -403,12 +403,12 @@ impl VideoAggregatorImpl for SkiaCompositor {
                 mapped_mem.copy_from_slice(frame.plane_data(0).unwrap());
                 drawn_background = true;
 
-                return std::ops::ControlFlow::Continue(());
+                return true;
             }
 
             pads_to_draw.push((pad.clone(), frame));
 
-            std::ops::ControlFlow::Continue(())
+            true
         });
 
         let mut surface =
