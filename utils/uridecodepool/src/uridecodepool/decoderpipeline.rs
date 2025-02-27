@@ -291,6 +291,56 @@ impl DecoderPipeline {
             }
 
             return;
+        } else if pad
+            .stream()
+            .map_or(false, |s| matches!(s.stream_type(), gst::StreamType::AUDIO))
+        {
+            let filter =
+                gst::parse::bin_from_description("audioconvert ! scaletempo ! audioconvert", true)
+                    .expect("Could not link converter bin>");
+            gst::debug!(CAT, imp = self, "Got filter: {filter:?}");
+            if let Err(err) = self.pipeline().add(&filter) {
+                gst::error!(CAT, imp = self, "Failed to add filter: {:?}", err);
+                return;
+            }
+
+            filter.sync_state_with_parent().unwrap();
+
+            let filter_sinkpad = filter.sink_pads().first().unwrap().clone();
+            if let Err(err) = pad.link(&filter_sinkpad) {
+                gst::error!(CAT, imp = self, "Failed to link pads: {:?}", err);
+                gst::error!(
+                    CAT,
+                    imp = self,
+                    "Failed link pads {:?}:{:?}: {:#?}\n -> {:?}:{}: {:#?} \n: {:?}",
+                    pad.parent().map(|p| p.name()),
+                    pad.name(),
+                    pad.query_caps(None),
+                    sinkpad.parent().map(|p| p.name()),
+                    sinkpad.name(),
+                    sinkpad.query_caps(None),
+                    err
+                );
+            }
+
+            let pad = filter.src_pads().first().unwrap().clone();
+            if let Err(err) = pad.link(&sinkpad) {
+                gst::error!(CAT, imp = self, "Failed to link pads: {:?}", err);
+                gst::error!(
+                    CAT,
+                    imp = self,
+                    "Failed link pads {:?}:{:?}: {:#?}\n -> {:?}:{}: {:#?} \n: {:?}",
+                    pad.parent().map(|p| p.name()),
+                    pad.name(),
+                    pad.query_caps(None),
+                    sinkpad.parent().map(|p| p.name()),
+                    sinkpad.name(),
+                    sinkpad.query_caps(None),
+                    err
+                );
+            }
+
+            return;
         }
 
         if let Err(err) = pad.link(&sinkpad) {
