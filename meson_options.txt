@@ -53,6 +53,7 @@ option('togglerecord', type: 'feature', value: 'auto', description: 'Build toggl
 option('tracers', type: 'feature', value: 'auto', description: 'Build tracers plugin')
 option('uridecodepool', type: 'feature', value: 'auto', description: 'Build uridecodepool plugin')
 option('uriplaylistbin', type: 'feature', value: 'auto', description: 'Build uriplaylistbin plugin')
+option('segmentclipper', type: 'feature', value: 'auto', description: 'Build segmentclipper plugin')
 
 # video
 option('cdg', type: 'feature', value: 'auto', description: 'Build cdg plugin')
