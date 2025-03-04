@@ -121,6 +121,7 @@ plugins = {
   'spotify': {'library': 'libgstspotify'},
 
   'uridecodepool': {'library': 'libgsturidecodepool'},
+  'segmentclipper': {'library': 'libgstsegmentclipper'},
 
   'file': {'library': 'libgstrsfile'},
   'originalbuffer': {'library': 'libgstoriginalbuffer'},
