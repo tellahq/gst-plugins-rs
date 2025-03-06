@@ -350,7 +350,7 @@ impl UriDecodePool {
             } else if initial_seek.is_some()
                 && seek.as_ref().unwrap().structure() != initial_seek.as_ref().unwrap().structure()
             {
-                gst::error!(
+                gst::info!(
                     CAT,
                     "Seek events are different {seek:?} != {initial_seek:?}"
                 );
