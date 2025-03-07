@@ -14,6 +14,7 @@ parser.add_argument("--buffers", help="include buffers levels", action="store_tr
 parser.add_argument("--no-max", help="do not include max levels (enabled by default)", action="store_true")
 parser.add_argument("--line-mode", help="show current levels with lines instead of points", action="store_true")
 parser.add_argument("--focus-queue", help="focus on a specific queue name, hiding all others")
+parser.add_argument("--show-total", help="show the sum across all queues", action="store_true")
 args = parser.parse_args()
 
 include_filter = None
@@ -59,6 +60,63 @@ with open(args.file, mode='r', encoding='utf_8', newline='') as csvfile:
         # Update maximum bytes value seen for this queue
         if bytes_value > queues[row[1]]['max-bytes-value']:
             queues[row[1]]['max-bytes-value'] = bytes_value
+
+# Compute maximum queued across all queues
+def compute_max_across_queues(queues, metric_key):
+    """
+    Compute maximum values across all queues by tracking the last known value
+    for each queue at any given time, only considering active (non-zero) queues.
+    """
+    # Create time-ordered list of all data points with queue information
+    all_data_points = []
+
+    for queue_name, values in queues.items():
+        data_points = values[metric_key]
+        for wallclock, value in data_points:
+            all_data_points.append((wallclock, queue_name, value))
+
+    # Sort by wallclock time
+    all_data_points.sort()
+
+    # Track the last known value for each queue
+    last_known_values = {}
+    # Track the total sum at each time point
+    time_sums = []
+    # Track the maximum sum and when it occurred
+    max_sum = 0
+    max_sum_time = 0
+    max_sum_queue_values = {}
+
+    # Process data points in chronological order
+    for wallclock, queue_name, value in all_data_points:
+        # Update the last known value for this queue - only track non-zero values
+        if value > 0:
+            last_known_values[queue_name] = value
+        elif queue_name in last_known_values:
+            # If a queue reports 0, remove it from active tracking
+            del last_known_values[queue_name]
+
+        # Calculate the current total across all active queues
+        current_total = sum(last_known_values.values())
+
+        # Add to our time series
+        time_sums.append((wallclock, current_total))
+
+        # Check if this is a new maximum
+        if current_total > max_sum:
+            max_sum = current_total
+            max_sum_time = wallclock
+            # Take a snapshot of all queue values at this time
+            max_sum_queue_values = last_known_values.copy()
+
+    # Convert max_sum_queue_values to the sorted format expected by the rest of the code
+    sorted_queue_details = sorted(
+        [(queue, value) for queue, value in max_sum_queue_values.items()],
+        key=lambda x: x[1],
+        reverse=True
+    )
+
+    return time_sums, (max_sum_time, max_sum), sorted_queue_details
 
 # Determine which plots to create
 plots = []
@@ -197,10 +255,110 @@ for queue_name, values in queues.items():
                     row=row, col=1
                 )
 
+# Process total queue levels if requested
+if args.show_total:
+    # Compute max across queues for each metric
+    bytes_sums = time_sums = buffer_sums = []
+    bytes_details = time_details = buffer_details = []
+
+    if "bytes" in [p[0] for p in plots] or not plots:
+        bytes_sums, max_bytes, bytes_details = compute_max_across_queues(queues, 'cur-level-bytes')
+
+        # Calculate total for verification
+        total_reported = sum(value for _, value in bytes_details)
+        for queue, value in bytes_details:
+            percentage = (value / max_bytes[1]) * 100 if max_bytes[1] > 0 else 0
+
+    if "time" in [p[0] for p in plots] or not plots:
+        time_sums, max_time, time_details = compute_max_across_queues(queues, 'cur-level-time')
+        for queue, value in time_details:
+            percentage = (value / max_time[1]) * 100 if max_time[1] > 0 else 0
+
+    if "buffers" in [p[0] for p in plots]:
+        buffer_sums, max_buffers, buffer_details = compute_max_across_queues(queues, 'cur-level-buffers')
+        for queue, value in buffer_details:
+            percentage = (value / max_buffers[1]) * 100 if max_buffers[1] > 0 else 0
+
+    # Add total to plots if requested
+    for row, (plot_type, _) in enumerate(plots, start=1):
+        if plot_type == "bytes" and bytes_sums:
+            fig.add_trace(
+                go.Scatter(
+                    x=[x[0] for x in bytes_sums],
+                    y=[x[1] for x in bytes_sums],
+                    mode="lines",
+                    name="Total bytes across all queues",
+                    line=dict(color="red", width=1.0, dash="solid"),
+                    legendgroup="total",
+                    showlegend=True
+                ),
+                row=row, col=1
+            )
+
+            # Add annotation for maximum point
+            fig.add_annotation(
+                x=max_bytes[0],
+                y=max_bytes[1],
+                text=f"Max: {max_bytes[1] / (1024 * 1024):.2f} MB",
+                showarrow=True,
+                arrowhead=1,
+                row=row, col=1
+            )
+
+        elif plot_type == "time" and time_sums:
+            fig.add_trace(
+                go.Scatter(
+                    x=[x[0] for x in time_sums],
+                    y=[x[1] for x in time_sums],
+                    mode="lines",
+                    name="Total time across all queues",
+                    line=dict(color="red", width=1.0, dash="solid"),
+                    legendgroup="total",
+                    showlegend=True
+                ),
+                row=row, col=1
+            )
+
+            # Add annotation for maximum point
+            fig.add_annotation(
+                x=max_time[0],
+                y=max_time[1],
+                text=f"Max: {max_time[1]:.6f}s",
+                showarrow=True,
+                arrowhead=1,
+                row=row, col=1
+            )
+
+        elif plot_type == "buffers" and buffer_sums:
+            fig.add_trace(
+                go.Scatter(
+                    x=[x[0] for x in buffer_sums],
+                    y=[x[1] for x in buffer_sums],
+                    mode="lines",
+                    name="Total buffers across all queues",
+                    line=dict(color="red", width=1.0, dash="solid"),
+                    legendgroup="total",
+                    showlegend=True
+                ),
+                row=row, col=1
+            )
+
+            # Add annotation for maximum point
+            fig.add_annotation(
+                x=max_buffers[0],
+                y=max_buffers[1],
+                text=f"Max: {max_buffers[1]} buffers",
+                showarrow=True,
+                arrowhead=1,
+                row=row, col=1
+            )
+
 # Update layout
 title_text = 'Queue Levels'
 if args.focus_queue and args.focus_queue in queues:
     title_text = f'Queue Levels - Focus on: {args.focus_queue}'
+if args.show_total:
+    title_text += ' (with Total Across All Queues)'
 
 # Add updatemenus for queue selection
 updatemenus = [
@@ -234,6 +392,9 @@ for queue_name in visible_queues:
         # Check if this trace belongs to the current queue
         if queue_name in data_item.name:
             queue_visibility.append(True)
+        # Keep totals visible if they exist
+        elif "Total" in data_item.name:
+            queue_visibility.append(True)
         else:
             queue_visibility.append(False)
 
@@ -242,6 +403,23 @@ for queue_name in visible_queues:
         dict(
             args=[{'visible': queue_visibility}],
             label=f"Focus on: {queue_name}",
+            method="update"
+        )
+    )
+
+# Add button to show only totals if totals are enabled
+if args.show_total:
+    total_only_visibility = []
+    for data_item in fig.data:
+        if "Total" in data_item.name:
+            total_only_visibility.append(True)
+        else:
+            total_only_visibility.append(False)
+
+    updatemenus[0]['buttons'].append(
+        dict(
+            args=[{'visible': total_only_visibility}],
+            label=f"Show only totals",
             method="update"
         )
     )
@@ -261,14 +439,19 @@ fig.update_layout(
 )
 
 # Add a note about the line styles
+note_text = "Solid lines/points: Current level"
 if not args.no_max:
-    fig.add_annotation(
-        xref="paper", yref="paper",
-        x=0.5, y=1.05,
-        text="Solid lines/points: Current level | Dotted lines: Maximum size",
-        showarrow=False,
-        font=dict(size=12)
-    )
+    note_text += " | Dotted lines: Maximum size"
+if args.show_total:
+    note_text += " | Black line: Total across all queues"
+
+fig.add_annotation(
+    xref="paper", yref="paper",
+    x=0.5, y=1.05,
+    text=note_text,
+    showarrow=False,
+    font=dict(size=12)
+)
 
 # Update y-axis titles
 for i, (_, ylabel) in enumerate(plots, start=1):
