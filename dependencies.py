@@ -81,6 +81,7 @@ class CargoAnalyzer:
             wanted_features |= set([name])
             wanted_features |= set(value)
             if name.startswith("gst"):
+
                 # Required for some reason for rswebrtc which has a specific feature
                 wanted_features |= {f"{cargo_data['package']['name']}/{name}"}
 

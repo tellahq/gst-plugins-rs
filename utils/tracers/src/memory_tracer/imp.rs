@@ -34,6 +34,9 @@
  * Since: 0.14
  */
 use gst::glib;
+use string_interner::StringInterner;
+use string_interner::symbol::SymbolU32;
+
 use gst::glib::Properties;
 use gst::prelude::*;
 use gst::subclass::prelude::*;
@@ -48,24 +51,37 @@ static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
     )
 });
 
+static STRING_INTERNER: LazyLock<Mutex<string_interner::DefaultStringInterner>> = LazyLock::new(|| {
+    Mutex::new(StringInterner::default())
+});
+
+enum EventType {
+    Alloc,
+    Free,
+    Queued,
+    Dequeued,
+}
+
+impl EventType {
+    fn as_str(&self) -> &'static str {
+        match self {
+            EventType::Alloc => "alloc",
+            EventType::Free => "free",
+            EventType::Queued => "queued",
+            EventType::Dequeued => "dequeued",
+        }
+    }
+}
+
 struct MemoryEvent {
     timestamp: u64,
     ptr: usize,
     parent: usize,
     size: usize,
-    is_alloc: bool,
-    memory_type: &'static str,
+    type_: EventType,
+    memory_type: SymbolU32,
 }
 
-impl MemoryEvent {
-    fn event_type(&self) -> &str {
-        if self.is_alloc {
-            "alloc"
-        } else {
-            "free"
-        }
-    }
-}
 
 #[derive(Debug)]
 struct Settings {
@@ -135,15 +151,16 @@ impl MemoryTracer {
         state.logs_written = true;
         drop(state);
 
+        let interner = STRING_INTERNER.lock().unwrap();
         for event in &log {
             if let Err(err) = writeln!(
                 &mut file,
                 "{},{},{},0x{:08x},{:?},{}",
                 event.timestamp,
-                event.event_type(),
+                event.type_.as_str(),
                 event.ptr,
                 event.parent,
-                event.memory_type,
+                interner.resolve(event.memory_type).unwrap(),
                 event.size
             ) {
                 gst::error!(CAT, imp = self, "Failed to write to file: {err}");
@@ -178,6 +195,8 @@ impl ObjectImpl for MemoryTracer {
 
         self.register_hook(TracerHook::MemoryInit);
         self.register_hook(TracerHook::MemoryFreePre);
+        self.register_hook(TracerHook::PoolBufferQueued);
+        self.register_hook(TracerHook::PoolBufferDequeued);
     }
 
     fn dispose(&self) {
@@ -207,10 +226,10 @@ impl TracerImpl for MemoryTracer {
             timestamp: ts,
             ptr,
             parent,
-            is_alloc: true,
-            memory_type: memory
+            type_: EventType::Alloc,
+            memory_type: STRING_INTERNER.lock().unwrap().get_or_intern(memory
                 .allocator()
-                .map_or("unknown", |alloc| alloc.memory_type()),
+                .map_or("unknown", |alloc| alloc.memory_type())),
             size,
         });
     }
@@ -224,12 +243,38 @@ impl TracerImpl for MemoryTracer {
             timestamp: ts,
             parent,
             ptr,
-            is_alloc: false,
-            memory_type: memory
+            type_: EventType::Free,
+            memory_type: STRING_INTERNER.lock().unwrap().get_or_intern(memory
                 .allocator()
-                .map_or("unknown", |alloc| alloc.memory_type()),
+                .map_or("unknown", |alloc| alloc.memory_type())),
             size: memory.maxsize(),
         });
+    }
+
+    fn pool_buffer_queued(&self, ts: u64, pool: &gst::BufferPool, buffer: &gst::Buffer) {
+        let mut state = self.state.lock().unwrap();
+        state.log.push(MemoryEvent {
+            timestamp: ts,
+            parent: 0usize,
+            ptr: buffer.as_ptr() as usize,
+            type_: EventType::Queued,
+            memory_type: STRING_INTERNER.lock().unwrap().get_or_intern(pool.name()),
+            size: buffer.size(),
+        });
+
+    }
+
+    fn pool_buffer_dequeued(&self, ts: u64, pool: &gst::BufferPool, buffer: &gst::Buffer) {
+        let mut state = self.state.lock().unwrap();
+        state.log.push(MemoryEvent {
+            timestamp: ts,
+            parent: 0usize,
+            ptr: buffer.as_ptr() as usize,
+            type_: EventType::Dequeued,
+            memory_type: STRING_INTERNER.lock().unwrap().get_or_intern(pool.name()),
+            size: buffer.size(),
+        });
+
     }
 }
 
