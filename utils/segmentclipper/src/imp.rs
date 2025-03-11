@@ -42,6 +42,7 @@ struct State {
     segment: gst::FormattedSegment<gst::ClockTime>,
     framerate: Option<gst::Fraction>,
     last_dropped_buffer: Option<gst::Buffer>,
+    pushed_buffer: bool,
 }
 
 #[derive(Default)]
@@ -113,10 +114,15 @@ impl BaseTransformImpl for SegmentClipper {
                 || buffer_ends_at_start_of_segment
             {
                 return drop_buffer(&mut state);
-            } else if segment.stop().is_some() && Some(start) >= segment.stop()
-                || buffer_starts_at_end_of_segment
+            } else if (segment.stop().is_some() && Some(start) >= segment.stop()
+                || buffer_starts_at_end_of_segment)
+                && state.pushed_buffer
             {
-                gst::debug!(CAT, imp = self, "Buffer reached end of segment {segment:?}");
+                gst::debug!(
+                    CAT,
+                    imp = self,
+                    "Buffer reached end of segment {segment:?} --> EOS"
+                );
                 return Err(gst::FlowError::Eos);
             }
         } else {
@@ -128,11 +134,12 @@ impl BaseTransformImpl for SegmentClipper {
                 || buffer_starts_at_end_of_segment
             {
                 return drop_buffer(&mut state);
-            } else if stop
+            } else if (stop
                 <= segment
                     .start()
                     .expect("Can't have a NONE segment.start in reverse playback")
-                || buffer_starts_at_end_of_segment
+                || buffer_starts_at_end_of_segment)
+                && state.pushed_buffer
             {
                 gst::debug!(CAT, imp = self, "Buffer reached end of segment");
                 return Err(gst::FlowError::Eos);
@@ -173,7 +180,23 @@ impl BaseTransformImpl for SegmentClipper {
         let (pts, end) = if let Some((pts, end)) = state.segment.clip(start, stop) {
             (pts, end)
         } else {
-            unreachable!("Buffer {buffer:?} outside of segment {:?}", state.segment);
+            assert!(!state.pushed_buffer, "Buffer {buffer:?} outside of segment {:?}
+                while we have already pushed a buffer, this case can only happen when we get no buffer
+                before EOS", state.segment);
+            let pts = state.segment.start();
+            let end = state.framerate.map_or_else(
+                || state.segment.stop().map_or(None, |stop| Some(stop)),
+                |framerate| {
+                    pts.map(|pts| {
+                        pts + gst::ClockTime::from_nseconds(
+                            gst::ClockTime::SECOND.nseconds() * framerate.denom() as u64
+                                / framerate.numer() as u64,
+                        )
+                    })
+                },
+            );
+
+            (pts, end)
         };
         let buffer_mut = buffer.make_mut();
         if let Some(pts) = pts {
@@ -184,6 +207,7 @@ impl BaseTransformImpl for SegmentClipper {
             }
         }
 
+        state.pushed_buffer = true;
         Ok(GenerateOutputSuccess::Buffer(buffer))
     }
 
@@ -241,6 +265,7 @@ impl BaseTransformImpl for SegmentClipper {
         } else if let gst::EventView::FlushStop(..) = event.view() {
             let mut state = self.state.lock().unwrap();
             state.last_dropped_buffer = None;
+            state.pushed_buffer = false;
         } else if let gst::EventView::Eos(..) = event.view() {
             let mut state = self.state.lock().unwrap();
             if let Some(mut last_buffer) = state.last_dropped_buffer.take() {
