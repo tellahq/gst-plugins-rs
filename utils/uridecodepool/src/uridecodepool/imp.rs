@@ -1165,7 +1165,7 @@ impl BaseSrcImpl for UriDecodePoolSrc {
         let seek_event = if let Some(seek_event) = state.seek_event.take() {
             seek_event
         } else {
-            gst::info!(CAT, imp = self, "Ignoring initial seek");
+            gst::info!(CAT, imp = self, "Ignoring initial seek {segment:#?}");
 
             return true;
         };

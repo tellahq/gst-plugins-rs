@@ -601,7 +601,11 @@ impl DecoderPipeline {
                 }) && s.current() == gst::State::Playing
                     && self.state.lock().unwrap().pending_seek.as_ref().is_some()
                 {
-                    gst::debug!(CAT, obj = self.pipeline_ref(), "Pipeline ready to seek");
+                    gst::debug!(
+                        CAT,
+                        obj = self.pipeline_ref(),
+                        "Reached Playing state, ready to seek"
+                    );
 
                     self.seek_in_thread();
                 }
