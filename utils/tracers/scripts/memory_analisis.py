@@ -27,8 +27,13 @@ def parse_memory_data(csv_file):
         usecols=["timestamp", "operation", "pointer", "parent", "type", "size"],
     )
 
+    def filter(x):
+        try:
+            return int(x, 16) == 0
+        except TypeError:
+            return False
     # Filter out entries with parents early
-    df = df[df["parent"].apply(lambda x: int(x, 16) == 0)]
+    df = df[df["parent"].apply(filter)]
 
     # Convert size to MB once
     df["size"] = df["size"] / (1024 * 1024)
@@ -188,7 +193,7 @@ def create_memory_graph(memory_values_by_type):
             # Default to gray for unknown types
             color = "gray"
 
-        decimation_factor = max(1, len(values) // 10000)
+        decimation_factor = max(1, len(values) // 10_000)
 
         # Decimate the data points
         decimated_values = values[::decimation_factor]
@@ -759,6 +764,7 @@ def create_combined_dashboard(memory_data, queue_data, plot_options):
 
 def main():
     parser = argparse.ArgumentParser(description="GStreamer Memory and Queue Analysis Tool")
+    parser.add_argument("--save", help="Save the visualization to an html file")
 
     # Input files
     input_group = parser.add_argument_group('Input Files')
@@ -775,7 +781,7 @@ def main():
     queue_group.add_argument("-n", "--no-max", help="Do not include max levels (enabled by default)", action="store_true")
     queue_group.add_argument("-l", "--line-mode", help="Show current levels with lines instead of points", action="store_true")
     queue_group.add_argument("-f", "--focus-queue", help="Focus on a specific queue name, hiding all others")
-    queue_group.add_argument("-s", "--show-total", help="Show the sum across all queues", action="store_true")
+    queue_group.add_argument("--show-total", help="Show the sum across all queues", action="store_true")
 
     args = parser.parse_args()
 
@@ -817,9 +823,13 @@ def main():
             show_total=args.show_total
         )
 
-    # Display figure
-    print("Opening visualization in browser...")
-    fig.show()
+    if args.save:
+        print(f"Saving visualization to {args.save}...")
+        fig.write_html(args.save, include_plotlyjs=True, full_html=True, include_mathjax=False)
+    else:
+        # Display figure
+        print("Opening visualization in browser...")
+        fig.show()
 
 
 if __name__ == "__main__":
