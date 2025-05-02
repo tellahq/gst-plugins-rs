@@ -13,6 +13,7 @@ skia = { package = "skia-safe", version = "0.78" }
 gst.workspace = true
 gst-base.workspace = true
 gst-video = { workspace = true, features = ["v1_20"] }
+ges = { package = "gstreamer-editing-services", git = "https://gitlab.freedesktop.org/gstreamer/gstreamer-rs", branch = "main", features = ["v1_24"] }
 tracing = "0.1"
 
 [lib]

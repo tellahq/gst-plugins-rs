@@ -3136,6 +3136,7 @@ dependencies = [
  "gstreamer",
  "gstreamer-base",
  "gstreamer-check",
+ "gstreamer-editing-services",
  "gstreamer-video",
  "skia-safe",
  "tracing",
@@ -3661,6 +3662,34 @@ source = "git+https://gitlab.freedesktop.org/thiblahute/gstreamer-rs?branch=tla_
 dependencies = [
  "glib-sys",
  "gobject-sys",
+ "gstreamer-sys",
+ "libc",
+ "system-deps 7.0.3",
+]
+
+[[package]]
+name = "gstreamer-editing-services"
+version = "0.24.0"
+source = "git+https://gitlab.freedesktop.org/thiblahute/gstreamer-rs?branch=tla_1.26.0#4a20344eb567b77a00d8262030a60e61191e579a"
+dependencies = [
+ "gio",
+ "glib",
+ "gstreamer",
+ "gstreamer-base",
+ "gstreamer-editing-services-sys",
+ "gstreamer-pbutils",
+ "libc",
+]
+
+[[package]]
+name = "gstreamer-editing-services-sys"
+version = "0.24.0"
+source = "git+https://gitlab.freedesktop.org/thiblahute/gstreamer-rs?branch=tla_1.26.0#4a20344eb567b77a00d8262030a60e61191e579a"
+dependencies = [
+ "gio-sys",
+ "glib-sys",
+ "gobject-sys",
+ "gstreamer-pbutils-sys",
  "gstreamer-sys",
  "libc",
  "system-deps 7.0.3",

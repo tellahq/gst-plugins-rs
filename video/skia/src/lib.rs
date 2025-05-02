@@ -10,9 +10,11 @@
 use gst::glib;
 
 mod compositor;
+mod reshape;
 
 fn plugin_init(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
     compositor::register(plugin)?;
+    reshape::register(plugin)?;
     #[cfg(feature = "doc")]
     {
         use gst::prelude::*;

@@ -187,3 +187,4 @@ gst-sdp = { package = "gstreamer-sdp", git = "https://gitlab.freedesktop.org/thi
 gst-utils = { package = "gstreamer-utils", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "tla_1.26.0" }
 gst-video = { package = "gstreamer-video", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "tla_1.26.0" }
 gst-webrtc = { package = "gstreamer-webrtc", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "tla_1.26.0" }
+ges = { package = "gstreamer-editing-services", git = "https://gitlab.freedesktop.org/thiblahute/gstreamer-rs", branch = "tla_1.26.0" }
