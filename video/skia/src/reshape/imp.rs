@@ -1,15 +1,13 @@
+#[cfg(feature = "ges")]
 use ges::prelude::*;
 use gst::{
     glib::{self, Properties},
     subclass::prelude::*,
 };
-use gst_base::{
-    prelude::*,
-    subclass::base_transform::{InputBuffer, PrepareOutputBufferSuccess},
-};
+use gst_base::subclass::base_transform::{InputBuffer, PrepareOutputBufferSuccess};
 use gst_video::{prelude::*, subclass::prelude::*, VideoFormat};
 
-use std::sync::{Mutex, LazyLock};
+use std::sync::{LazyLock, Mutex};
 use tracing::*;
 
 const DEFAULT_BORDER_RADIUS: f64 = 0.0;
@@ -31,6 +29,7 @@ struct Settings {
     crop_right: i32,
     crop_top: i32,
     crop_bottom: i32,
+    disable_crop_optimization: bool,
 }
 
 impl Default for Settings {
@@ -43,6 +42,7 @@ impl Default for Settings {
             crop_right: 0,
             crop_top: 0,
             crop_bottom: 0,
+            disable_crop_optimization: false,
         }
     }
 }
@@ -51,8 +51,11 @@ impl Default for Settings {
 struct State {
     in_info: Option<gst_video::VideoInfo>,
     out_info: Option<gst_video::VideoInfo>,
+
+    // Wanted position of the image taking into account padding
     compositor_position: Option<skia::Rect>,
 
+    // Output size of the **compositor itself**
     compositor_size: Option<skia::Size>,
 }
 
@@ -143,143 +146,306 @@ pub struct SkiaReshape {
         mutable_playing,
         member = crop_bottom
     )]
+    #[property(
+        name = "disable-crop-optimization",
+        type = bool,
+        get,
+        set,
+        nick = "Disable crop optimization",
+        blurb = "Disable the 'big zoom' crop optimization that reduces output buffer size",
+        default_value = false,
+        mutable_playing,
+        member = disable_crop_optimization
+    )]
     settings: Mutex<Settings>,
     state: Mutex<State>,
 }
 
+#[derive(Debug, Copy, Clone)]
+struct TranslationRects {
+    // The rectangle that is used to crop the source image
+    src_with_cropping_applied: skia::Rect,
+
+    // The rectangle that is used to draw the image
+    dst_rect: skia::Rect,
+
+    // The rectangle that correspond to where the optimized cropped image correspond
+    // after cropping is applied
+    original_dst_rect: skia::Rect,
+
+    // The final position in the compositor, after taking account all cropping
+    final_position: skia::Rect,
+}
+
 impl SkiaReshape {
-    fn compute_output_size(&self) -> (Option<i32>, Option<i32>) {
-        let rect = if let Some(rect) = self.state.lock().unwrap().compositor_position {
-            rect
+    fn frame_composition_info(&self, _buf: &gst::BufferRef) -> (Option<skia::Rect>, f64) {
+        #[cfg(feature = "ges")]
+        {
+            if let Some(meta) = _buf.meta::<ges::prelude::FrameCompositionMeta>() {
+                let padding = self.settings.lock().unwrap().padding_px as f32;
+                (
+                    Some(skia::Rect::from_xywh(
+                        meta.pos_x() as f32,
+                        meta.pos_y() as f32,
+                        meta.width() as f32 + padding * 2.,
+                        meta.height() as f32 + padding * 2.,
+                    )),
+                    meta.alpha(),
+                )
+            } else {
+                (None, 1.0)
+            }
+        }
+        #[cfg(not(feature = "ges"))]
+        (None, 1.0)
+    }
+
+    #[cfg(not(feature = "ges"))]
+    fn setup_compositor_size(&self) {}
+
+    #[cfg(feature = "ges")]
+    fn setup_compositor_size(&self) {
+        let mut parent = Some(self.obj().clone().upcast::<gst::Object>());
+        while let Some(p) = parent {
+            if let Some(track) = p.downcast_ref::<ges::VideoTrack>() {
+                let mut state = self.state.lock().unwrap();
+                state.compositor_size = None;
+                if let Some(caps) = track.restriction_caps() {
+                    for structure in caps.iter() {
+                        let (mut width, mut height) = (None, None);
+                        if let Ok(w) = structure.get::<i32>("width") {
+                            width = Some(w);
+                        }
+                        if let Ok(h) = structure.get::<i32>("height") {
+                            height = Some(h);
+                        }
+
+                        if let (Some(w), Some(h)) = (width, height) {
+                            state.compositor_size = Some(skia::Size::new(w as f32, h as f32));
+                        } else {
+                            gst::error!(CAT, "Failed to get width/height from restriction caps");
+                        }
+                    }
+                }
+
+                gst::info!(
+                    CAT,
+                    imp = self,
+                    "Compositor size: {:?}",
+                    state.compositor_size
+                );
+
+                break;
+            }
+
+            parent = p.parent()
+        }
+    }
+
+    fn compute_output_size(&self, caps: &gst::Caps) -> (Option<i32>, Option<i32>) {
+        if let Ok(rects) = self.compute_src_image_and_dest_rects(Some(caps)) {
+            (
+                Some(rects.final_position.width().ceil() as i32),
+                Some(rects.final_position.height().ceil() as i32),
+            )
+        } else if let Some(rect) = self.state.lock().unwrap().compositor_position {
+            (
+                Some(rect.width().ceil() as i32),
+                Some(rect.height().ceil() as i32),
+            )
         } else {
-            return (None, None);
-        };
-
-        let (mut width, mut height) = (None, None);
-        let settings = self.settings.lock().unwrap();
-        if rect.width() >= 0. {
-            let mut tmpwidth = rect.width().ceil() as i32;
-            tmpwidth += settings.padding_px * 2;
-            tmpwidth -= settings.crop_left - settings.crop_right;
-
-            width = Some(tmpwidth);
+            (None, None)
         }
-
-        if rect.height() >= 0. {
-            let mut tmpheight = rect.height().ceil() as i32;
-
-            tmpheight += settings.padding_px * 2;
-            tmpheight -= settings.crop_top - settings.crop_bottom;
-
-            height = Some(tmpheight);
-        }
-
-        gst::error!( CAT, imp = self, "Width: {width:?} - Height: {height:?}");
-
-        (width, height)
     }
 
     fn compute_src_image_and_dest_rects(
         &self,
-    ) -> Result<(skia::Rect, skia::Rect), gst::FlowError> {
+        incaps: Option<&gst::Caps>,
+    ) -> Result<TranslationRects, gst::FlowError> {
         let state = self.state.lock().unwrap();
-        let in_info = state
-            .in_info
-            .as_ref()
-            .ok_or_else(|| {
-                gst::element_imp_error!(self, gst::CoreError::Negotiation, ["Have no state yet"]);
-                gst::FlowError::NotNegotiated
-            })?
-            .clone();
-        let out_info = state
-            .out_info
-            .as_ref()
-            .ok_or_else(|| {
-                gst::element_imp_error!(self, gst::CoreError::Negotiation, ["Have no state yet"]);
-                gst::FlowError::NotNegotiated
-            })?
-            .clone();
-        let compositor_size = state.compositor_size;
-        let position_in_compositor_rect = state.compositor_position;
+        let in_info = if let Some(in_info) = state.in_info.as_ref() {
+            in_info.clone()
+        } else if let Some(incaps) = incaps {
+            if !incaps.is_fixed() {
+                return Err(gst::FlowError::NotNegotiated);
+            }
+
+            if let Ok(info) = gst_video::VideoInfo::from_caps(incaps) {
+                info
+            } else {
+                return Err(gst::FlowError::NotNegotiated);
+            }
+        } else {
+            gst::element_imp_error!(self, gst::CoreError::Negotiation, ["Have no state yet"]);
+            return Err(gst::FlowError::NotNegotiated);
+        };
+
+        let compositor_size = state.compositor_size.unwrap_or(skia::Size::new(
+            in_info.width() as f32,
+            in_info.height() as f32,
+        ));
+
+        let out_frame_size = if let Some(out_info) = state.out_info.as_ref() {
+            skia::Size::new(out_info.width() as f32, out_info.height() as f32)
+        } else {
+            compositor_size
+        };
+
+        let (padding_px, mut src_crop_left, crop_right, mut src_crop_top, crop_bottom) = {
+            let settings = self.settings.lock().unwrap();
+            (
+                settings.padding_px as f32,
+                settings.crop_left as f32,
+                settings.crop_right as f32,
+                settings.crop_top as f32,
+                settings.crop_bottom as f32,
+            )
+        };
 
         // We have extended the video frame to get rid of floats in transform_caps,
         // we will draw the video frame anti-aliassed on the x_offset and y_offset.
         // Doing it this way means the compositor doesn't need to do any
         // scaling/anti-aliassing, we already do it here instead.
-        let (x_offset, y_offset, width_in_compositor, height_in_compositor) =
-            if let Some(ref position_in_compositor) = position_in_compositor_rect {
+        let (mut dst_left, mut dst_top, compositor_rect, img_compositor_rect) =
+            if let Some(ref position_in_compositor) = state.compositor_position {
                 let x = position_in_compositor.left();
                 let y = position_in_compositor.top();
-                let width = position_in_compositor.width();
-                let height = position_in_compositor.height();
-                let nop =  (x - x.floor(), y - y.floor(), width, height);
 
-                gst::error!(
-                    CAT,
-                    imp = self,
-                    "Nop: {nop:?}"
-                );
-                // (0.0, 0.0, out_info.width() as f32, out_info.height() as f32)
-                nop
+                (
+                    x - x.floor(),
+                    y - y.floor(),
+                    *position_in_compositor,
+                    skia::Rect::from_xywh(
+                        position_in_compositor.x() + padding_px,
+                        position_in_compositor.y() + padding_px,
+                        position_in_compositor.width() - 2. * padding_px,
+                        position_in_compositor.height() - 2. * padding_px,
+                    ),
+                )
             } else {
-                (0.0, 0.0, out_info.width() as f32, out_info.height() as f32)
+                (
+                    0.0,
+                    0.0,
+                    skia::Rect::from_xywh(0., 0., out_frame_size.width, out_frame_size.height),
+                    skia::Rect::from_xywh(0., 0., out_frame_size.width, out_frame_size.height),
+                )
             };
-        gst::error!(
-            CAT,
-            imp = self,
-            "Yes: {:?}", (x_offset, y_offset, width_in_compositor, height_in_compositor)
-        );
         drop(state);
 
-        // Figure out the right rect for the video frame.
-        let (padding_px, crop_left, crop_right, crop_top, crop_bottom) = {
+        let mut src_width = in_info.width() as f32 - crop_right;
+        let mut src_height = in_info.height() as f32 - crop_bottom;
+
+        let mut dst_width = img_compositor_rect.width();
+        let mut dst_height = img_compositor_rect.height();
+
+        let mut original_dst_left = dst_left;
+        let mut original_dst_top = dst_top;
+        let original_dst_width = dst_width;
+        let original_dst_height = dst_height;
+
+        let out_x = compositor_rect.x();
+        let out_y = compositor_rect.y();
+        let mut out_width = compositor_rect.width();
+        let mut out_height = compositor_rect.height();
+
+        let crop_optimization_enabled = {
             let settings = self.settings.lock().unwrap();
-            (
-                settings.padding_px,
-                settings.crop_left,
-                settings.crop_right,
-                settings.crop_top,
-                settings.crop_bottom,
-            )
+            !settings.disable_crop_optimization
         };
 
-        let src_with_cropping_applied = skia::Rect::from_xywh(
-            crop_left as f32,
-            crop_top as f32,
-            in_info.width() as f32 - (crop_left as f32 + crop_right as f32),
-            in_info.height() as f32 - (crop_top as f32 + crop_bottom as f32),
+        if crop_optimization_enabled {
+            let width_factor = (in_info.width() as f32) / dst_width;
+            let height_factor = in_info.height() as f32 / dst_height;
+
+            if img_compositor_rect.left() < 0. {
+                let extra_crop_left_src = img_compositor_rect.left() * width_factor;
+
+                src_crop_left -= extra_crop_left_src;
+                let prev = dst_width;
+                dst_width += img_compositor_rect.left();
+
+                original_dst_left += img_compositor_rect.left();
+                out_width += compositor_rect.left();
+            } else if compositor_rect.left() < 0. {
+                dst_left += img_compositor_rect.left();
+                original_dst_left += img_compositor_rect.left();
+
+                out_width += compositor_rect.left();
+            } else {
+                dst_left += padding_px;
+                original_dst_left += padding_px;
+            }
+
+            if img_compositor_rect.right() > compositor_size.width {
+                let cropped = compositor_size.width - img_compositor_rect.right();
+                let extra_crop_right = cropped * width_factor;
+
+                src_width += extra_crop_right;
+                let prev = dst_width;
+                dst_width += cropped;
+            }
+
+            if compositor_rect.right() > compositor_size.width {
+                out_width += compositor_size.width - compositor_rect.right();
+            }
+
+            if img_compositor_rect.top() < 0. {
+                let extra_crop_top = img_compositor_rect.top() * height_factor;
+
+                src_crop_top -= extra_crop_top;
+                dst_height += img_compositor_rect.top();
+                original_dst_top += img_compositor_rect.top();
+                out_height += compositor_rect.top();
+            } else if compositor_rect.top() < 0. {
+                dst_top += compositor_rect.top() + padding_px;
+                original_dst_top += compositor_rect.top() + padding_px;
+                out_height += compositor_rect.top();
+            } else {
+                dst_top += padding_px;
+                original_dst_top += padding_px;
+            }
+
+            if img_compositor_rect.bottom() > compositor_size.height {
+                let cropped = compositor_size.height - img_compositor_rect.bottom();
+                let extra_crop_bottom = cropped * height_factor;
+
+                src_height += extra_crop_bottom;
+                let prev = dst_height;
+                dst_height += cropped;
+            }
+
+            if compositor_rect.bottom() > compositor_size.height {
+                out_height += compositor_size.height - compositor_rect.bottom();
+            }
+        } else {
+            dst_left += padding_px;
+            dst_top += padding_px;
+
+            original_dst_left += padding_px;
+            original_dst_top += padding_px;
+        }
+
+        let src_with_cropping_applied =
+            skia::Rect::from_ltrb(src_crop_left, src_crop_top, src_width, src_height);
+
+        if dst_top < 1. { dst_top = 0.; }
+        if dst_left < 1. { dst_left = 0.; }
+        let dst_rect = skia::Rect::from_xywh(dst_left, dst_top, dst_width, dst_height);
+
+        let original_dst_rect = skia::Rect::from_xywh(
+            original_dst_left,
+            original_dst_top,
+            original_dst_width,
+            original_dst_height,
         );
 
-        let x_offset = x_offset + padding_px as f32;
-        let y_offset = y_offset + padding_px as f32;
-        let dst_rect = skia::Rect::from_xywh(
-            x_offset,
-            y_offset,
-            width_in_compositor,
-            height_in_compositor,
-        );
-
-        // log only once
-        gst::error!(CAT, imp = self, "\nIN WIDTH: {:?} - in with - crop_left - crop_right {:?} -- \
-            src_rect with crop applied --> {src_with_cropping_applied:#?} -- (width: {:?})\n{dst_rect:#?}",
-            in_info.width(), in_info.width() as f32 - (crop_left as f32 + crop_right as f32),
-            src_with_cropping_applied.width()
-        );
-
-        Ok((src_with_cropping_applied, dst_rect))
+        Ok(TranslationRects {
+            src_with_cropping_applied,
+            dst_rect,
+            original_dst_rect,
+            final_position: skia::Rect::from_xywh(out_x, out_y, out_width, out_height),
+        })
     }
-}
-
-fn skia_rect_from_meta(
-    meta: Option<gst::MetaRef<ges::prelude::FrameCompositionMeta>>,
-) -> Option<skia::Rect> {
-    meta.map(|meta| {
-        let x = meta.pos_x() as f32;
-        let y = meta.pos_y() as f32;
-        let w = meta.width() as f32;
-        let h = meta.height() as f32;
-        skia::Rect::from_xywh(x, y, w, h)
-    })
 }
 
 #[glib::object_subclass]
@@ -348,41 +514,7 @@ impl BaseTransformImpl for SkiaReshape {
     fn start(&self) -> Result<(), gst::ErrorMessage> {
         gst::debug!(CAT, imp = self, "Starting");
 
-        let mut parent = Some(self.obj().clone().upcast::<gst::Object>());
-        while let Some(p) = parent {
-            if let Some(track) = p.downcast_ref::<ges::VideoTrack>() {
-                let mut state = self.state.lock().unwrap();
-                state.compositor_size = None;
-                if let Some(caps) = track.restriction_caps() {
-                    for structure in caps.iter() {
-                        let (mut width, mut height) = (None, None);
-                        if let Ok(w) = structure.get::<i32>("width") {
-                            width = Some(w);
-                        }
-                        if let Ok(h) = structure.get::<i32>("height") {
-                            height = Some(h);
-                        }
-
-                        if let (Some(w), Some(h)) = (width, height) {
-                            state.compositor_size = Some(skia::Size::new(w as f32, h as f32));
-                        } else {
-                            gst::error!(CAT, "Failed to get width/height from restriction caps");
-                        }
-                    }
-                }
-
-                gst::info!(
-                    CAT,
-                    imp = self,
-                    "Compositor size: {:?}",
-                    state.compositor_size
-                );
-
-                break;
-            }
-
-            parent = p.parent()
-        }
+        self.setup_compositor_size();
 
         self.parent_start()
     }
@@ -399,9 +531,11 @@ impl BaseTransformImpl for SkiaReshape {
         gst::debug!(
             CAT,
             imp = self,
-            "Configured for caps {} to {}",
-            incaps,
-            outcaps
+            "Scaling from {}x{} to {}x{}",
+            in_info.width(),
+            in_info.height(),
+            out_info.width(),
+            out_info.height(),
         );
 
         {
@@ -430,7 +564,7 @@ impl BaseTransformImpl for SkiaReshape {
                 self.parent_transform_caps(direction, &caps, filter)
             }
             gst::PadDirection::Sink => {
-                let (width, height) = self.compute_output_size();
+                let (width, height) = self.compute_output_size(caps);
 
                 if (width, height) == (None, None) {
                     let mut caps = caps.copy();
@@ -439,11 +573,19 @@ impl BaseTransformImpl for SkiaReshape {
                         .unwrap()
                         .map_in_place(move |_features, structure| {
                             if let Ok(width) = structure.get::<i32>("width") {
-                                structure.set("width", width - settings.crop_left - settings.crop_right);
+                                structure.set(
+                                    "width",
+                                    width - settings.crop_left - settings.crop_right
+                                        + 2 * settings.padding_px,
+                                );
                             }
 
                             if let Ok(height) = structure.get::<i32>("height") {
-                                structure.set("height", height - settings.crop_top - settings.crop_top);
+                                structure.set(
+                                    "height",
+                                    height - settings.crop_top - settings.crop_top
+                                        + 2 * settings.padding_px,
+                                );
                             }
 
                             std::ops::ControlFlow::Continue(())
@@ -471,9 +613,7 @@ impl BaseTransformImpl for SkiaReshape {
                         std::ops::ControlFlow::Continue(())
                     });
 
-                let res = self.parent_transform_caps(direction, &caps, filter);
-
-                res
+                self.parent_transform_caps(direction, &caps, filter)
             }
             _ => unreachable!(),
         }
@@ -484,13 +624,18 @@ impl BaseTransformImpl for SkiaReshape {
         is_discont: bool,
         inbuf: gst::Buffer,
     ) -> Result<gst::FlowSuccess, gst::FlowError> {
-        let compositor_position =
-            skia_rect_from_meta(inbuf.meta::<ges::prelude::FrameCompositionMeta>().clone());
+        let (compositor_position, _) = self.frame_composition_info(&inbuf);
 
         {
             let mut state = self.state.lock().unwrap();
             if state.compositor_position != compositor_position {
                 state.compositor_position = compositor_position;
+                gst::debug!(
+                    CAT,
+                    imp = self,
+                    "Compositor position changed to: {:?}",
+                    state.compositor_position,
+                );
                 drop(state);
 
                 self.obj().reconfigure_src();
@@ -508,26 +653,20 @@ impl BaseTransformImpl for SkiaReshape {
             return Ok(PrepareOutputBufferSuccess::InputBuffer);
         }
 
-        let state = self.state.lock().unwrap();
-        let out_info = state.out_info.as_ref().unwrap().clone();
-
         let (rect, in_size) = match inbuf {
-            InputBuffer::Writable(ref buf) => (
-                skia_rect_from_meta(buf.meta::<ges::prelude::FrameCompositionMeta>()),
-                buf.size(),
-            ),
-            InputBuffer::Readable(ref buf) => (
-                skia_rect_from_meta(buf.meta::<ges::prelude::FrameCompositionMeta>()),
-                0,
-            ),
+            InputBuffer::Writable(ref buf) => (self.frame_composition_info(buf).0, buf.size()),
+            InputBuffer::Readable(buf) => (self.frame_composition_info(buf).0, 0),
         };
 
+        let state = self.state.lock().unwrap();
+        let out_info = state.out_info.as_ref().unwrap().clone();
         assert!(rect == state.compositor_position);
         drop(state);
         if out_info.size() == in_size {
             if let InputBuffer::Writable(buf) = inbuf {
                 let settings = self.settings.lock().unwrap();
-                // add_custom_meta(buf, settings);
+                add_custom_meta(buf, settings);
+                gst::fixme!(CAT, imp = self, "UPDATE METADATAS!!",);
                 return Ok(PrepareOutputBufferSuccess::InputBuffer);
             }
         }
@@ -572,12 +711,9 @@ impl BaseTransformImpl for SkiaReshape {
                 gst::FlowError::Error
             })?;
         let settings = self.settings.lock().unwrap();
-        let padding = settings.padding_px as f64;
-        // add_custom_meta(mut_outbuf, settings);
-        // add_original_frame_meta(
-        //     mut_outbuf,
-        //     &inbuf.meta::<ges::prelude::FrameCompositionMeta>().unwrap(),
-        // );
+        let crop_optimization_enabled = !settings.disable_crop_optimization;
+        add_custom_meta(mut_outbuf, settings);
+        add_original_frame_meta(mut_outbuf, inbuf);
 
         self.copy_metadata(inbuf, mut_outbuf).map_err(|_| {
             gst::error!(
@@ -588,22 +724,70 @@ impl BaseTransformImpl for SkiaReshape {
         })?;
 
         // Update FrameCompositionMeta to also have the floored/ceiled values.
-        if let Some(rect) = self.state.lock().unwrap().compositor_position {
+        let compositor_position = self.state.lock().unwrap().compositor_position;
+        let mut croppedx = 0.;
+        let mut croppedy = 0.;
+        if let Some(compositor_rect) = compositor_position {
+            let rects = self.compute_src_image_and_dest_rects(None);
+            #[cfg(feature = "ges")]
             if let Some(mut meta) = mut_outbuf.meta_mut::<ges::prelude::FrameCompositionMeta>() {
                 // We need to floor the x and y values, and ceil the width and height
-                let x = rect.x().floor() as f64;
-                let y = rect.y().floor() as f64;
-                let width = rect.width().ceil() as f64;
-                let height = rect.height().ceil() as f64;
+                let mut x = compositor_rect.x() as f64;
+                let mut y = compositor_rect.y() as f64;
+                let mut width = compositor_rect.width() as f64;
+                let mut height = compositor_rect.height() as f64;
 
-                // Add padding
-                let width = width + (padding * 2.0);
-                let height = height + (padding * 2.0);
+                if crop_optimization_enabled {
+                    gst::log!(CAT, imp = self, "Big zoom optimization enabled");
+                    if let Ok(rects) = rects {
+                        width = rects.final_position.width() as f64;
+                        height = rects.final_position.height() as f64;
+                        if compositor_rect.left() < 0. {
+                            x = 0.;
+                            croppedx = compositor_rect.left() as f64;
+                        }
 
-                meta.set_pos_x(x);
-                meta.set_pos_y(y);
-                meta.set_width(width);
-                meta.set_height(height);
+                        if compositor_rect.top() < 0. {
+                            y = 0.;
+                            croppedy = compositor_rect.top() as f64;
+                        }
+                    }
+                }
+
+                meta.set_pos_x(x.floor());
+                meta.set_pos_y(y.floor());
+                meta.set_width(width.ceil());
+                meta.set_height(height.ceil());
+            }
+
+            if crop_optimization_enabled {
+                if let Ok(mut meta) = gst::meta::CustomMeta::from_mut_buffer(
+                    mut_outbuf,
+                    "OriginalFrameCompositionMeta",
+                ) {
+                    if let Ok(rects) = rects {
+                        let s = meta.mut_structure();
+
+                        s.set("croppedx", croppedx);
+                        s.set("croppedy", croppedy);
+
+                        s.set("posx", rects.original_dst_rect.left() as f64);
+                        s.set("posy", rects.original_dst_rect.top() as f64);
+                        s.set("height", rects.original_dst_rect.height() as f64);
+                        s.set("width", rects.original_dst_rect.width() as f64);
+                    }
+                } else {
+                    gst::debug!(
+                        CAT,
+                        imp = self,
+                        "Failed to get OriginalFrameCompositionMeta"
+                    );
+                }
+            }
+
+            #[cfg(not(feature = "ges"))]
+            {
+                let _ = compositor_rect;
             }
         }
 
@@ -637,13 +821,12 @@ impl VideoFilterImpl for SkiaReshape {
         frame: &gst_video::VideoFrameRef<&gst::BufferRef>,
         outframe: &mut gst_video::VideoFrameRef<&mut gst::BufferRef>,
     ) -> Result<gst::FlowSuccess, gst::FlowError> {
-        if let Some(meta) = frame.buffer().meta::<ges::prelude::FrameCompositionMeta>() {
-            // Optimisation, when alpha is 0, we don't need to draw anything.
-            if meta.alpha() == 0. {
-                gst::debug!(CAT, imp = self, "Alpha is 0, skipping drawing");
-                return Ok(gst::FlowSuccess::Ok);
-            }
-        }
+        let (meta, alpha) = self.frame_composition_info(outframe.buffer());
+
+        if alpha == 0.0 {
+            // Skip drawing when alpha is 0
+            return Ok(gst::FlowSuccess::Ok);
+        };
 
         let img_info = skia::ImageInfo::new(
             skia::ISize {
@@ -725,37 +908,45 @@ impl VideoFilterImpl for SkiaReshape {
                 .ok_or(gst::FlowError::Error)?;
 
         let canvas = out_surface.canvas();
-        let (crop_rect, dst_rect) = self.compute_src_image_and_dest_rects()?;
+
+        let crop_optimization_enabled = !self.settings.lock().unwrap().disable_crop_optimization;
+        gst::trace!(
+            CAT,
+            imp = self,
+            "Drawing frame with crop optimization: {}",
+            if crop_optimization_enabled {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
+        let rects = self.compute_src_image_and_dest_rects(None)?;
 
         // Clear the whole canvas, else we get artifacts from the previous frame
-        canvas.clear(skia::Color::from_rgb(0, 255, 0));
+        canvas.clear(skia::Color::TRANSPARENT);
 
         // Draw the video frame at the correct position, with anti-aliasing.
         let mut paint = skia::Paint::default();
         paint.set_anti_alias(true);
         paint.set_blend_mode(skia::BlendMode::Src);
 
-        // let crop_rect = skia::Rect::from_xywh(0., 0., 540., 480.);
+        let src_rect = Some((
+            &rects.src_with_cropping_applied,
+            skia::canvas::SrcRectConstraint::Strict,
+        ));
 
-        // Create a crop image filter
-        let crop_filter = skia::ImageFilter::crop(
-            crop_rect,
-            None,
-            None,
-        );
-        // paint.set_image_filter(crop_filter);
         canvas.draw_image_rect_with_sampling_options(
             &image,
-            Some((&crop_rect, skia::canvas::SrcRectConstraint::Strict)),
-            dst_rect,
+            src_rect,
+            rects.dst_rect,
             skia::SamplingOptions::new(skia::FilterMode::Linear, skia::MipmapMode::Linear),
             &paint,
         );
 
         // Clip out the rounded corners
         let border_radius = self.settings.lock().unwrap().border_radius_px as f32;
-
-        let rounded_dst_rect = skia::RRect::new_rect_xy(dst_rect, border_radius, border_radius);
+        let rounded_dst_rect =
+            skia::RRect::new_rect_xy(rects.original_dst_rect, border_radius, border_radius);
 
         canvas.clip_rrect(rounded_dst_rect, skia::ClipOp::Difference, true);
 
@@ -765,21 +956,43 @@ impl VideoFilterImpl for SkiaReshape {
     }
 }
 
-// fn add_custom_meta(outbuf: &mut gst::BufferRef, settings: std::sync::MutexGuard<'_, Settings>) {
-//     let mut meta = gst::meta::CustomMeta::add(outbuf, "RoundedCornersFrameMeta").unwrap();
-//     let s = meta.mut_structure();
-//     s.set("border-radius-px", settings.border_radius_px);
-//     s.set("corner-smoothing-pct", settings.corner_smoothing_pct);
-// }
+fn add_custom_meta(outbuf: &mut gst::BufferRef, settings: std::sync::MutexGuard<'_, Settings>) {
+    let mut meta = if let Ok(meta) = gst::meta::CustomMeta::add(outbuf, "RoundedCornersFrameMeta") {
+        meta
+    } else {
+        gst::info!(CAT, "RoundedCornersFrameMeta not registered");
+        return;
+    };
+    let s = meta.mut_structure();
+    s.set("border-radius-px", settings.border_radius_px);
+    s.set("corner-smoothing-pct", settings.corner_smoothing_pct);
+}
 
-// fn add_original_frame_meta(outbuf: &mut gst::BufferRef, meta: &ges::prelude::FrameCompositionMeta) {
-//     let mut new_meta = gst::meta::CustomMeta::add(outbuf, "OriginalFrameCompositionMeta").unwrap();
-//     let s = new_meta.mut_structure();
-//     s.set("alpha", meta.alpha());
-//     s.set("posx", meta.pos_x());
-//     s.set("posy", meta.pos_y());
-//     s.set("height", meta.height());
-//     s.set("width", meta.width());
-//     s.set("zorder", meta.zorder());
-//     s.set("operator", meta.operator());
-// }
+fn add_original_frame_meta(outbuf: &mut gst::BufferRef, inbuf: &gst::BufferRef) {
+    #[cfg(feature = "ges")]
+    {
+        if let Some(meta) = inbuf.meta::<ges::prelude::FrameCompositionMeta>() {
+            let mut new_meta = if let Ok(new_meta) =
+                gst::meta::CustomMeta::add(outbuf, "OriginalFrameCompositionMeta")
+            {
+                new_meta
+            } else {
+                gst::info!(CAT, "OriginalFrameCompositionMeta not registered");
+                return;
+            };
+            let s = new_meta.mut_structure();
+            s.set("alpha", meta.alpha());
+            s.set("posx", meta.pos_x());
+            s.set("posy", meta.pos_y());
+            s.set("height", meta.height());
+            s.set("width", meta.width());
+            s.set("zorder", meta.zorder());
+            s.set("operator", meta.operator());
+            gst::trace!(CAT, "OriginalFrameCompositionMeta: {:#?}", s);
+        }
+    }
+    #[cfg(not(feature = "ges"))]
+    {
+        let _ = (outbuf, inbuf);
+    }
+}
