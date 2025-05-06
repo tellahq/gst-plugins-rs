@@ -99,6 +99,13 @@ endif
 glib_dep = dependency('glib-2.0', version: glib_req)
 deps_cache += {'glib-2.0': glib_dep}
 
+ges_dep = dependency('gst-editing-services-1.0', version: '>=1.24', required: get_option('with-ges'))
+
+skia_features = []
+if ges_dep.found()
+  skia_features += 'ges'
+endif
+
 foreach d: deps
   dep = dependency(d[0], version: gst_req,
     fallback : [d[1], d[2]], required: d.get(4, true))
@@ -237,7 +244,10 @@ plugins = {
       'quic_roq',
     ],
   },
-  'skia': {'library': 'libgstskia'},
+  'skia': {
+    'library': 'libgstskia',
+    'features': skia_features,
+  },
   'validate': {
     'library': 'libgstrsvalidate',
     }, # Only used to handle the validate feature option
