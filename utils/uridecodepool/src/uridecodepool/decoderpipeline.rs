@@ -449,7 +449,6 @@ impl DecoderPipeline {
             return false;
         }
 
-        gst::error!(CAT, obj = pipeline, "--> Sending seek {:?}", seek_event);
         if !pipeline.send_event(seek_event) {
             gst::error!(CAT, obj = pipeline, "Failed to seek");
             return false;
