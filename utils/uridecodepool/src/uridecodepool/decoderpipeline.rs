@@ -735,10 +735,13 @@ impl DecoderPipeline {
     pub(crate) fn mark_target_src_pending(&self) {
         let mut state = self.state.lock().unwrap();
 
-        let target_src = state
-            .target_src
-            .used_src()
-            .expect("No target src whille trying to mark as pendinng");
+        let target_src = match state.target_src.used_src() {
+            None => {
+                gst::error!(CAT, "No target src to mark as pending");
+                return;
+            }
+            Some(target_src) => target_src,
+        };
 
         state.target_src = TargetSrcState::Pending(target_src.clone());
     }
