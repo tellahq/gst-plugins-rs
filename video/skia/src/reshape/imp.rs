@@ -428,8 +428,12 @@ impl SkiaReshape {
         let src_with_cropping_applied =
             skia::Rect::from_ltrb(src_crop_left, src_crop_top, src_width, src_height);
 
-        if dst_top < 1. { dst_top = 0.; }
-        if dst_left < 1. { dst_left = 0.; }
+        if dst_top < 1. {
+            dst_top = 0.;
+        }
+        if dst_left < 1. {
+            dst_left = 0.;
+        }
         let dst_rect = skia::Rect::from_xywh(dst_left, dst_top, dst_width, dst_height);
 
         let original_dst_rect = skia::Rect::from_xywh(
@@ -773,8 +777,16 @@ impl BaseTransformImpl for SkiaReshape {
 
                         s.set("posx", rects.original_dst_rect.left() as f64);
                         s.set("posy", rects.original_dst_rect.top() as f64);
-                        s.set("height", rects.original_dst_rect.height() as f64);
-                        s.set("width", rects.original_dst_rect.width() as f64);
+                        s.set(
+                            "height",
+                            rects.original_dst_rect.height().floor() as f64
+                                + (croppedy.floor() as f64 - croppedy.ceil() as f64),
+                        );
+                        s.set(
+                            "width",
+                            rects.original_dst_rect.width().floor() as f64
+                                + (croppedx.floor() as f64 - croppedx.ceil() as f64),
+                        );
                     }
                 } else {
                     gst::debug!(
