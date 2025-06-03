@@ -11,6 +11,7 @@ use gst::glib;
 
 mod compositor;
 mod reshape;
+mod reshape_common;
 
 fn plugin_init(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
     compositor::register(plugin)?;
