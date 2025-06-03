@@ -2398,6 +2398,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "gl"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a94edab108827d67608095e269cf862e60d920f144a5026d3dbcfd8b877fb404"
+dependencies = [
+ "gl_generator",
+]
+
+[[package]]
+name = "gl_generator"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a95dfc23a2b4a9a2f5ab41d194f8bfda3cabec42af4e39f08c339eb2a0c124d"
+dependencies = [
+ "khronos_api",
+ "log",
+ "xml-rs",
+]
+
+[[package]]
 name = "glib"
 version = "0.21.0"
 source = "git+https://github.com/thiblahute/gtk-rs-core?rev=e6b43dc4d7cdb1ab62d6522c90807e6cd40973aa#e6b43dc4d7cdb1ab62d6522c90807e6cd40973aa"
@@ -3181,6 +3201,7 @@ dependencies = [
 name = "gst-plugin-skia"
 version = "0.14.0-alpha.1"
 dependencies = [
+ "gl",
  "gst-plugin-version-helper",
  "gstreamer",
  "gstreamer-base",
@@ -4927,6 +4948,12 @@ checksum = "6aae1df220ece3c0ada96b8153459b67eebe9ae9212258bb0134ae60416fdf76"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "khronos_api"
+version = "3.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
 name = "kstring"
