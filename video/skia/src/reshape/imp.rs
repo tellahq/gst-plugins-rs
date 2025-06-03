@@ -223,7 +223,7 @@ impl SkiaReshape {
                         if let (Some(w), Some(h)) = (width, height) {
                             state.compositor_size = Some(skia::Size::new(w as f32, h as f32));
                         } else {
-                            gst::error!(CAT, "Failed to get width/height from restriction caps");
+                            gst::info!(CAT, "Failed to get width/height from restriction caps");
                         }
                     }
                 }
@@ -338,20 +338,13 @@ impl SkiaReshape {
         let mut dst_width = img_compositor_rect.width();
         let mut dst_height = img_compositor_rect.height();
 
-        let mut original_dst_left = dst_left;
-        let mut original_dst_top = dst_top;
-        let original_dst_width = dst_width;
-        let original_dst_height = dst_height;
+        let (mut original_dst_left, mut original_dst_top) = (dst_left, dst_top);
+        let (original_dst_width, original_dst_height) = (dst_width, dst_height);
 
-        let out_x = compositor_rect.x();
-        let out_y = compositor_rect.y();
-        let mut out_width = compositor_rect.width();
-        let mut out_height = compositor_rect.height();
+        let (out_x, out_y) = (compositor_rect.x(), compositor_rect.y());
+        let (mut out_width, mut out_height) = (compositor_rect.width(), compositor_rect.height());
 
-        let crop_optimization_enabled = {
-            let settings = self.settings.lock().unwrap();
-            !settings.disable_crop_optimization
-        };
+        let crop_optimization_enabled = !self.settings.lock().unwrap().disable_crop_optimization;
 
         if crop_optimization_enabled {
             let width_factor = (in_info.width() as f32) / dst_width;
@@ -361,7 +354,6 @@ impl SkiaReshape {
                 let extra_crop_left_src = img_compositor_rect.left() * width_factor;
 
                 src_crop_left -= extra_crop_left_src;
-                let prev = dst_width;
                 dst_width += img_compositor_rect.left();
 
                 original_dst_left += img_compositor_rect.left();
@@ -381,7 +373,6 @@ impl SkiaReshape {
                 let extra_crop_right = cropped * width_factor;
 
                 src_width += extra_crop_right;
-                let prev = dst_width;
                 dst_width += cropped;
             }
 
@@ -410,7 +401,6 @@ impl SkiaReshape {
                 let extra_crop_bottom = cropped * height_factor;
 
                 src_height += extra_crop_bottom;
-                let prev = dst_height;
                 dst_height += cropped;
             }
 
@@ -428,8 +418,12 @@ impl SkiaReshape {
         let src_with_cropping_applied =
             skia::Rect::from_ltrb(src_crop_left, src_crop_top, src_width, src_height);
 
-        if dst_top < 1. { dst_top = 0.; }
-        if dst_left < 1. { dst_left = 0.; }
+        if dst_top < 1.0 {
+            dst_top = 0.0;
+        }
+        if dst_left < 1.0 {
+            dst_left = 0.0;
+        }
         let dst_rect = skia::Rect::from_xywh(dst_left, dst_top, dst_width, dst_height);
 
         let original_dst_rect = skia::Rect::from_xywh(
@@ -666,7 +660,6 @@ impl BaseTransformImpl for SkiaReshape {
             if let InputBuffer::Writable(buf) = inbuf {
                 let settings = self.settings.lock().unwrap();
                 add_custom_meta(buf, settings);
-                gst::fixme!(CAT, imp = self, "UPDATE METADATAS!!",);
                 return Ok(PrepareOutputBufferSuccess::InputBuffer);
             }
         }
@@ -725,8 +718,7 @@ impl BaseTransformImpl for SkiaReshape {
 
         // Update FrameCompositionMeta to also have the floored/ceiled values.
         let compositor_position = self.state.lock().unwrap().compositor_position;
-        let mut croppedx = 0.;
-        let mut croppedy = 0.;
+        let (mut croppedx, mut croppedy): (f64, f64) = (0.0, 0.0);
         if let Some(compositor_rect) = compositor_position {
             let rects = self.compute_src_image_and_dest_rects(None);
             #[cfg(feature = "ges")]
@@ -771,8 +763,26 @@ impl BaseTransformImpl for SkiaReshape {
                         s.set("croppedx", croppedx);
                         s.set("croppedy", croppedy);
 
-                        s.set("posx", rects.original_dst_rect.left() as f64);
-                        s.set("posy", rects.original_dst_rect.top() as f64);
+                        // When content is cropped from negative positions, we need to adjust
+                        // for the fractional pixels that were lost in the cropping
+                        let pos_x = if croppedx < 0.0 {
+                            // croppedx is negative, representing content cropped from the left
+                            // We need to add back the fractional part that was lost
+                            rects.original_dst_rect.left() as f64 - croppedx.fract()
+                        } else {
+                            rects.original_dst_rect.left() as f64
+                        };
+
+                        let pos_y = if croppedy < 0.0 {
+                            // croppedy is negative, representing content cropped from the top
+                            // We need to add back the fractional part that was lost
+                            rects.original_dst_rect.top() as f64 - croppedy.fract()
+                        } else {
+                            rects.original_dst_rect.top() as f64
+                        };
+
+                        s.set("posx", pos_x);
+                        s.set("posy", pos_y);
                         s.set("height", rects.original_dst_rect.height() as f64);
                         s.set("width", rects.original_dst_rect.width() as f64);
                     }
@@ -802,13 +812,12 @@ impl BaseTransformImpl for SkiaReshape {
         match stream_time {
             Some(stream_time) => match self.obj().sync_values(stream_time) {
                 Ok(_) => (),
-                Err(_) => {
-                    // error!("Failed to sync values: {:?}", err);
-                    // Ignoring this error for now. It seems harmless.
+                Err(err) => {
+                    gst::trace!(CAT, imp = self, "Failed to sync values: {:?}", err);
                 }
             },
             None => {
-                warn!("No stream time available");
+                gst::trace!(CAT, imp = self, "No stream time available");
             }
         }
     }
@@ -821,7 +830,7 @@ impl VideoFilterImpl for SkiaReshape {
         frame: &gst_video::VideoFrameRef<&gst::BufferRef>,
         outframe: &mut gst_video::VideoFrameRef<&mut gst::BufferRef>,
     ) -> Result<gst::FlowSuccess, gst::FlowError> {
-        let (meta, alpha) = self.frame_composition_info(outframe.buffer());
+        let (_, alpha) = self.frame_composition_info(outframe.buffer());
 
         if alpha == 0.0 {
             // Skip drawing when alpha is 0
@@ -886,7 +895,7 @@ impl VideoFilterImpl for SkiaReshape {
 
         let plane_data = match outframe.plane_data_mut(0) {
             Err(e) => {
-                error!("Failed to get plane data: {:?}", e);
+                gst::error!(CAT, imp = self, "Failed to get plane data: {:?}", e);
                 return Err(gst::FlowError::Error);
             }
             Ok(data) => data,
@@ -949,7 +958,6 @@ impl VideoFilterImpl for SkiaReshape {
             skia::RRect::new_rect_xy(rects.original_dst_rect, border_radius, border_radius);
 
         canvas.clip_rrect(rounded_dst_rect, skia::ClipOp::Difference, true);
-
         canvas.clear(skia::Color::TRANSPARENT);
 
         Ok(gst::FlowSuccess::Ok)
