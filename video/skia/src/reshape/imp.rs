@@ -76,25 +76,22 @@ impl ElementImpl for SkiaReshape {
 
     fn pad_templates() -> &'static [gst::PadTemplate] {
         static PAD_TEMPLATES: LazyLock<Vec<gst::PadTemplate>> = LazyLock::new(|| {
-            let sink_caps = gst_video::VideoCapsBuilder::new()
+            let caps = gst_video::VideoCapsBuilder::new()
                 .format(VideoFormat::Rgba)
                 .build();
             let sink_pad_template = gst::PadTemplate::new(
                 "sink",
                 gst::PadDirection::Sink,
                 gst::PadPresence::Always,
-                &sink_caps,
+                &caps,
             )
             .unwrap();
 
-            let src_caps = gst_video::VideoCapsBuilder::new()
-                .format(VideoFormat::Rgba)
-                .build();
             let src_pad_template = gst::PadTemplate::new(
                 "src",
                 gst::PadDirection::Src,
                 gst::PadPresence::Always,
-                &src_caps,
+                &caps,
             )
             .unwrap();
 
