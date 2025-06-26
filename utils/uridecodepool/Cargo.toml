@@ -2,7 +2,7 @@
 name = "gst-plugin-uridecodepool"
 version = "0.11.0-alpha.1"
 authors = ["Thibault Saunier <tsaunier@igalia.com>"]
-repository = "https://gitlab.freedesktop.org/gstreamer/gst-plugins-rs"
+repository.workspace = true
 license = "MIT OR Apache-2.0"
 description = "GStreamer Rust plugin to expose a pool of decoding pipelines as source elements"
 edition = "2021"
