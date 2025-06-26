@@ -158,22 +158,22 @@ gdk-x11 = { package = "gdk4-x11", git = "https://github.com/gtk-rs/gtk4-rs", bra
 gdk-win32 = { package = "gdk4-win32", git = "https://github.com/gtk-rs/gtk4-rs", branch = "main", features = [
   "v4_4",
 ] }
-gst = { package = "gstreamer", git = "https://github.com/thiblahute/gstreamer-rs", branch = "sequence_1.26.0" }
-gst-allocators = { package = "gstreamer-allocators", git = "https://github.com/thiblahute/gstreamer-rs", branch = "sequence_1.26.0" }
-gst-analytics = { package = "gstreamer-analytics", git = "https://github.com/thiblahute/gstreamer-rs", branch = "sequence_1.26.0" }
-gst-app = { package = "gstreamer-app", git = "https://github.com/thiblahute/gstreamer-rs", branch = "sequence_1.26.0" }
-gst-audio = { package = "gstreamer-audio", git = "https://github.com/thiblahute/gstreamer-rs", branch = "sequence_1.26.0" }
-gst-base = { package = "gstreamer-base", git = "https://github.com/thiblahute/gstreamer-rs", branch = "sequence_1.26.0" }
-gst-check = { package = "gstreamer-check", git = "https://github.com/thiblahute/gstreamer-rs", branch = "sequence_1.26.0" }
+gst = { package = "gstreamer", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
+gst-allocators = { package = "gstreamer-allocators", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
+gst-analytics = { package = "gstreamer-analytics", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
+gst-app = { package = "gstreamer-app", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
+gst-audio = { package = "gstreamer-audio", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
+gst-base = { package = "gstreamer-base", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
+gst-check = { package = "gstreamer-check", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
 gst-plugin-version-helper = { path = "./version-helper" }
-gst-gl = { package = "gstreamer-gl", git = "https://github.com/thiblahute/gstreamer-rs", branch = "sequence_1.26.0" }
-gst-gl-egl = { package = "gstreamer-gl-egl", git = "https://github.com/thiblahute/gstreamer-rs", branch = "sequence_1.26.0" }
-gst-gl-wayland = { package = "gstreamer-gl-wayland", git = "https://github.com/thiblahute/gstreamer-rs", branch = "sequence_1.26.0" }
-gst-gl-x11 = { package = "gstreamer-gl-x11", git = "https://github.com/thiblahute/gstreamer-rs", branch = "sequence_1.26.0" }
-gst-net = { package = "gstreamer-net", git = "https://github.com/thiblahute/gstreamer-rs", branch = "sequence_1.26.0" }
-gst-pbutils = { package = "gstreamer-pbutils", git = "https://github.com/thiblahute/gstreamer-rs", branch = "sequence_1.26.0" }
-gst-rtp = { package = "gstreamer-rtp", git = "https://github.com/thiblahute/gstreamer-rs", branch = "sequence_1.26.0" }
-gst-sdp = { package = "gstreamer-sdp", git = "https://github.com/thiblahute/gstreamer-rs", branch = "sequence_1.26.0" }
-gst-utils = { package = "gstreamer-utils", git = "https://github.com/thiblahute/gstreamer-rs", branch = "sequence_1.26.0" }
-gst-video = { package = "gstreamer-video", git = "https://github.com/thiblahute/gstreamer-rs", branch = "sequence_1.26.0" }
-gst-webrtc = { package = "gstreamer-webrtc", git = "https://github.com/thiblahute/gstreamer-rs", branch = "sequence_1.26.0" }
+gst-gl = { package = "gstreamer-gl", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
+gst-gl-egl = { package = "gstreamer-gl-egl", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
+gst-gl-wayland = { package = "gstreamer-gl-wayland", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
+gst-gl-x11 = { package = "gstreamer-gl-x11", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
+gst-net = { package = "gstreamer-net", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
+gst-pbutils = { package = "gstreamer-pbutils", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
+gst-rtp = { package = "gstreamer-rtp", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
+gst-sdp = { package = "gstreamer-sdp", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
+gst-utils = { package = "gstreamer-utils", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
+gst-video = { package = "gstreamer-video", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
+gst-webrtc = { package = "gstreamer-webrtc", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
