@@ -1384,12 +1384,29 @@ impl BaseSrcImpl for UriDecodePoolSrc {
                 return Err(gst::FlowError::NotNegotiated);
             }
         } else {
-            (
-                self.process_objects(None)?
-                    .downcast::<gst::Sample>()
-                    .expect("Should always have a sample when not waiting for EOS"),
-                None,
-            )
+            let sample = self
+                .process_objects(None)?
+                .downcast::<gst::Sample>()
+                .expect("Should always have a sample when not waiting for EOS");
+            if let (Some(current_caps), Some(sample_caps)) =
+                (self.obj().src_pad().current_caps(), sample.caps())
+            {
+                if !current_caps.is_equal_fixed(sample_caps) {
+                    // This can happen when there is a mismatch between
+                    // appsink.sinkpad.current_caps() we got in the last .negotiate() cycle
+                    // and the moment we get the sample.
+                    gst::info!(
+                        CAT,
+                        imp = self,
+                        "Sample caps: {sample_caps:?} doesn't match pad caps {current_caps:?} \
+                            --> Forcing caps"
+                    );
+
+                    self.set_caps(sample.caps().unwrap().to_owned())?;
+                }
+            }
+
+            (sample, None)
         };
         gst::trace!(CAT, imp = self, "Got {sample:?}");
 
