@@ -175,6 +175,7 @@ gst-pbutils = { package = "gstreamer-pbutils", git = "https://github.com/thiblah
 gst-rtp = { package = "gstreamer-rtp", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
 gst-sdp = { package = "gstreamer-sdp", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
 gst-utils = { package = "gstreamer-utils", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
+gst-validate = { package = "gstreamer-validate", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
 gst-video = { package = "gstreamer-video", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
 gst-webrtc = { package = "gstreamer-webrtc", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
 

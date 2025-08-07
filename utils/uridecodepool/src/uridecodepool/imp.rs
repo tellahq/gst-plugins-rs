@@ -916,6 +916,17 @@ impl ObjectSubclass for UriDecodePoolSrc {
     type ParentType = gst_base::BaseSrc;
 
     type Interfaces = (gst::ChildProxy,);
+
+    fn class_init(_klass: &mut Self::Class) {
+        // Register validate actions when class is initialized
+        // At this point, gst_validate::init() has been called by the application
+        #[cfg(feature = "validate")]
+        {
+            if let Err(err) = super::validate::register_validate_actions() {
+                gst::warning!(CAT, "Failed to register validate actions: {}", err);
+            }
+        }
+    }
 }
 
 #[glib::derived_properties]
