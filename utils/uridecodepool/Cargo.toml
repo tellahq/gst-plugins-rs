@@ -13,6 +13,7 @@ url = "2"
 gst-app = { workspace = true, features = ["v1_20"] }
 gst = { workspace = true }
 gst-base = { workspace = true, features = ["v1_24"] }
+gst-validate = { workspace = true, optional = true }
 
 tokio = { version = "1", features = [
   "fs",
@@ -35,6 +36,7 @@ gst-plugin-version-helper = { path = "../../version-helper" }
 static = []
 capi = []
 doc = ["gst/v1_18"]
+validate = ["dep:gst-validate"]
 
 [package.metadata.capi]
 min_version = "0.8.0"

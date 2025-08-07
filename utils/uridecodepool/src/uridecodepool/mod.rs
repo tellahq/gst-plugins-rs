@@ -8,6 +8,8 @@ mod decoderpipeline;
 mod imp;
 mod pool;
 mod seek_handler;
+#[cfg(feature = "validate")]
+mod validate;
 
 glib::wrapper! {
     pub struct UriDecodePoolSrc(ObjectSubclass<imp::UriDecodePoolSrc>)
@@ -36,6 +38,11 @@ impl UriDecodePool {
 
     pub(crate) fn release(&self, decoderpipe: DecoderPipeline) {
         self.imp().release(decoderpipe)
+    }
+
+    #[cfg(feature = "validate")]
+    pub(crate) fn pipeline_count(&self) -> (usize, usize, usize) {
+        self.imp().pipeline_count()
     }
 }
 

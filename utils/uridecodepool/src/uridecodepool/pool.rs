@@ -15,6 +15,9 @@ use gst::{
 };
 use tokio::runtime;
 
+#[cfg(feature = "validate")]
+use gst_validate::prelude::*;
+
 use crate::uridecodepool::decoderpipeline;
 use crate::uridecodepool::decoderpipeline::TargetSrcState;
 
@@ -611,5 +614,16 @@ impl UriDecodePool {
         if let Err(err) = pipeline.imp().release() {
             gst::error!(CAT, "Failed to release pipeline: {}", err);
         }
+    }
+
+    #[cfg(feature = "validate")]
+    pub(crate) fn pipeline_count(&self) -> (usize, usize, usize) {
+        let state = self.state.lock().unwrap();
+        let all_pipelines = self.pipelines.lock().unwrap();
+        (
+            all_pipelines.len(),
+            state.running.len(),
+            state.prepared.len() + state.pooled.len(),
+        )
     }
 }
