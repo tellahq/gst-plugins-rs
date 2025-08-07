@@ -139,23 +139,23 @@ edition = "2021"
 rust-version = "1.80"
 
 [workspace.dependencies]
-glib = { git = "https://github.com/gtk-rs/gtk-rs-core", branch = "main" }
-gio = { git = "https://github.com/gtk-rs/gtk-rs-core", branch = "main" }
-cairo-rs = { git = "https://github.com/gtk-rs/gtk-rs-core", branch = "main", features = [
+glib = { git = "https://github.com/gtk-rs/gtk-rs-core", rev = "e6b43dc4d7cdb1ab62d6522c90807e6cd40973aa" }
+gio = { git = "https://github.com/gtk-rs/gtk-rs-core", rev = "e6b43dc4d7cdb1ab62d6522c90807e6cd40973aa" }
+cairo-rs = { git = "https://github.com/gtk-rs/gtk-rs-core", rev = "e6b43dc4d7cdb1ab62d6522c90807e6cd40973aa", features = [
   "use_glib",
 ] }
-pango = { git = "https://github.com/gtk-rs/gtk-rs-core", branch = "main" }
-pangocairo = { git = "https://github.com/gtk-rs/gtk-rs-core", branch = "main" }
-gtk = { package = "gtk4", git = "https://github.com/gtk-rs/gtk4-rs", branch = "main", features = [
+pango = { git = "https://github.com/gtk-rs/gtk-rs-core", rev = "e6b43dc4d7cdb1ab62d6522c90807e6cd40973aa" }
+pangocairo = { git = "https://github.com/gtk-rs/gtk-rs-core", rev = "e6b43dc4d7cdb1ab62d6522c90807e6cd40973aa" }
+gtk = { package = "gtk4", git = "https://github.com/gtk-rs/gtk4-rs", rev = "a7ea462cd1384f1730ff9a6bc066040225d22183", features = [
   "v4_6",
 ] }
-gdk-wayland = { package = "gdk4-wayland", git = "https://github.com/gtk-rs/gtk4-rs", branch = "main", features = [
+gdk-wayland = { package = "gdk4-wayland", git = "https://github.com/gtk-rs/gtk4-rs", rev = "a7ea462cd1384f1730ff9a6bc066040225d22183", features = [
   "v4_4",
 ] }
-gdk-x11 = { package = "gdk4-x11", git = "https://github.com/gtk-rs/gtk4-rs", branch = "main", features = [
+gdk-x11 = { package = "gdk4-x11", git = "https://github.com/gtk-rs/gtk4-rs", rev = "a7ea462cd1384f1730ff9a6bc066040225d22183", features = [
   "v4_4",
 ] }
-gdk-win32 = { package = "gdk4-win32", git = "https://github.com/gtk-rs/gtk4-rs", branch = "main", features = [
+gdk-win32 = { package = "gdk4-win32", git = "https://github.com/gtk-rs/gtk4-rs", rev = "a7ea462cd1384f1730ff9a6bc066040225d22183", features = [
   "v4_4",
 ] }
 gst = { package = "gstreamer", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
@@ -177,3 +177,20 @@ gst-sdp = { package = "gstreamer-sdp", git = "https://github.com/thiblahute/gstr
 gst-utils = { package = "gstreamer-utils", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
 gst-video = { package = "gstreamer-video", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
 gst-webrtc = { package = "gstreamer-webrtc", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
+
+[patch."https://github.com/gtk-rs/gtk-rs-core"]
+glib = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "e6b43dc4d7cdb1ab62d6522c90807e6cd40973aa" }
+gio = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "e6b43dc4d7cdb1ab62d6522c90807e6cd40973aa" }
+cairo-rs = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "e6b43dc4d7cdb1ab62d6522c90807e6cd40973aa", features = ["use_glib"] }
+pango = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "e6b43dc4d7cdb1ab62d6522c90807e6cd40973aa" }
+pangocairo = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "e6b43dc4d7cdb1ab62d6522c90807e6cd40973aa" }
+glib-sys = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "e6b43dc4d7cdb1ab62d6522c90807e6cd40973aa" }
+gio-sys = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "e6b43dc4d7cdb1ab62d6522c90807e6cd40973aa" }
+gobject-sys = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "e6b43dc4d7cdb1ab62d6522c90807e6cd40973aa" }
+cairo-sys-rs = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "e6b43dc4d7cdb1ab62d6522c90807e6cd40973aa" }
+pango-sys = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "e6b43dc4d7cdb1ab62d6522c90807e6cd40973aa" }
+pangocairo-sys = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "e6b43dc4d7cdb1ab62d6522c90807e6cd40973aa" }
+gdk-pixbuf = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "e6b43dc4d7cdb1ab62d6522c90807e6cd40973aa" }
+gdk-pixbuf-sys = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "e6b43dc4d7cdb1ab62d6522c90807e6cd40973aa" }
+graphene-rs = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "e6b43dc4d7cdb1ab62d6522c90807e6cd40973aa" }
+graphene-sys = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "e6b43dc4d7cdb1ab62d6522c90807e6cd40973aa" }
