@@ -210,9 +210,11 @@ impl UriDecodePool {
 
         let mut state = self.state.lock().unwrap();
 
-        if let Some(position) = state.prepared.iter().position(|p| {
-            p.imp().target_src().has_target(src) && !p.seek_handler().has_eos_sample()
-        }) {
+        if let Some(position) = state
+            .prepared
+            .iter()
+            .position(|p| p.imp().target_src().relates_to(src))
+        {
             let pipeline = state.prepared.remove(position);
             drop(state);
 
@@ -248,7 +250,7 @@ impl UriDecodePool {
         if state
             .prepared
             .iter()
-            .any(|p| p.imp().target_src().has_target(src))
+            .any(|p| p.imp().target_src().relates_to(src))
         {
             gst::debug!(
                 CAT,
@@ -285,6 +287,9 @@ impl UriDecodePool {
             return None;
         }
 
+        decoderpipe
+            .imp()
+            .set_target_src(TargetSrcState::Pending(src.clone()));
         state.prepared.push(decoderpipe.clone());
 
         Some(decoderpipe.upcast())
@@ -545,6 +550,11 @@ impl UriDecodePool {
 
             // FIXME: Find a better way to handle keeping the pipeline with fake EOS around
             if cleanup_timeout < std::time::Duration::from_secs(1) {
+                gst::debug!(
+                    CAT,
+                    "Forcing cleanup_timeout from {:?} to 1 second minimum",
+                    cleanup_timeout
+                );
                 cleanup_timeout = std::time::Duration::from_secs(1);
             }
             // Let it be reused asap
