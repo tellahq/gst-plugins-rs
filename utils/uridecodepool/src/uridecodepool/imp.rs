@@ -1085,8 +1085,8 @@ impl ElementImpl for UriDecodePoolSrc {
                     .seek_handler()
                     .handle_nlecomposition_seek(&self.obj(), &event)
                 {
-                    NleCompositionSeekResult::Expected => {
-                        self.state.lock().unwrap().seek_event = Some(event.clone());
+                    NleCompositionSeekResult::Expected(seek) => {
+                        self.state.lock().unwrap().seek_event = Some(seek);
 
                         return true;
                     }
