@@ -58,7 +58,7 @@ pub(crate) enum NleCompositionSeekResult {
     /// The seek is unexpected or invalid - handle it as a regular seek
     Unexpected,
     /// The seek matches expectations - use it as our seek
-    Expected,
+    Expected(gst::Event),
     /// The seek is expected but we haven't received an initialization seek
     /// Assume our underlying pipeline is a nested timeline and the unrelying
     /// timeline will be the one that seeks
@@ -71,6 +71,14 @@ pub(crate) enum SeekInfo {
     None,
     SeekSegment(gst::Seqnum, gst::Segment),
     PreviousSeekDone(gst::Sample, Option<gst::Segment>),
+}
+fn clone_nle_seek(event: &gst::Event) -> gst::Event {
+    let mut event = event.clone();
+
+    let mut_seek = event.make_mut();
+    mut_seek.structure_mut().set("nlecomposition-seek", true);
+
+    event
 }
 
 impl SeekHandler {
@@ -107,7 +115,7 @@ impl SeekHandler {
         res
     }
 
-    fn get_sample_start_end_stream_time(
+    fn get_sample_start_stop_stream_time(
         &self,
         sample: &gst::Sample,
         obj: &super::UriDecodePoolSrc,
@@ -181,8 +189,13 @@ impl SeekHandler {
         };
 
         let (clipping_succeeded, start, stop) =
-            self.get_sample_start_end_stream_time(sample, obj)?;
+            self.get_sample_start_stop_stream_time(sample, obj)?;
         if !clipping_succeeded {
+            gst::info!(
+                CAT,
+                obj = obj,
+                "Sample start/stop could not be clipped to segment"
+            );
             return Ok(());
         }
         // This logic follows the implementation of gst::Segment::clip
@@ -605,9 +618,9 @@ impl SeekHandler {
                 obj.imp().decoderpipe().unwrap().name()
             );
         }
-        state.nle_seek = Some(seek.clone());
+        state.nle_seek = Some(clone_nle_seek(seek));
 
-        return NleCompositionSeekResult::Expected;
+        return NleCompositionSeekResult::Expected(clone_nle_seek(seek));
     }
 
     pub(crate) fn handle_seek(
