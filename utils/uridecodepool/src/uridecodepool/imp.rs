@@ -59,6 +59,10 @@ struct State {
     flushing: bool,
     seek_seqnum: Option<gst::Seqnum>,
     segment_seqnum: Option<gst::Seqnum>,
+
+    // We are faking an EOS event (for example when the duration is reached)
+    // Mostly useful for tests.
+    faking_eos: bool,
     needs_segment: bool,
     seek_segment: Option<gst::Segment>,
     ignore_seek: bool,
@@ -794,7 +798,15 @@ impl UriDecodePoolSrc {
             gst::log!(CAT, imp = self, "Setting eos seqnum: {seqnum:?}");
         }
 
-        probe_info.data = Some(gst::PadProbeData::Event(builder.build()));
+        let mut eos_event = builder.build();
+        if state.faking_eos {
+            let mut writable_eos = eos_event.make_mut();
+
+            writable_eos.structure_mut().set("faking-eos", true);
+            state.faking_eos = false;
+        }
+
+        probe_info.data = Some(gst::PadProbeData::Event(eos_event));
 
         gst::PadProbeReturn::Ok
     }
@@ -1446,7 +1458,11 @@ impl BaseSrcImpl for UriDecodePoolSrc {
                 sample.segment().cloned()
             }
             Err((gst::FlowError::Eos, Some(seqnum))) => {
-                self.state.lock().unwrap().segment_seqnum = Some(seqnum);
+                {
+                    let mut state = self.state.lock().unwrap();
+                    state.segment_seqnum = Some(seqnum);
+                    state.faking_eos = true;
+                }
                 if eos_sample_caps_to_set.is_none() {
                     return Err(gst::FlowError::Eos);
                 }
