@@ -327,6 +327,7 @@ impl UriDecodePool {
                 src.stream_id(),
                 pipeline.state(gst::ClockTime::ZERO)
             );
+            pipe.imp().increment_reuse_count();
             pipe.imp().mark_target_src_in_use();
 
             (pipe, self.state.lock().unwrap())

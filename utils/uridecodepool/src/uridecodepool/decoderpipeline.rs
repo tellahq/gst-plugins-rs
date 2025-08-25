@@ -107,6 +107,9 @@ struct State {
     initial_seek: Option<gst::Event>,
     last_seek_seqnum: gst::Seqnum,
 
+    // Track how many times this pipeline has been reused
+    reuse_count: i32,
+
     pool: Option<super::UriDecodePool>,
 }
 
@@ -152,6 +155,7 @@ impl Default for DecoderPipeline {
                 pool: None,
                 pending_seek: None,
                 initial_seek: None,
+                reuse_count: 0,
             }),
             state_lock: ReentrantMutex::new(false),
             tearing_down: AtomicBool::new(false),
@@ -864,6 +868,23 @@ impl DecoderPipeline {
             this.seek_handler().reset(this.pipeline().upcast_ref());
             obj.emit_by_name::<()>("stopped", &[]);
         });
+    }
+
+    pub(crate) fn increment_reuse_count(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.reuse_count += 1;
+
+        gst::debug!(
+            CAT,
+            obj = self.pipeline_ref(),
+            "Pipeline reuse count incremented to {}",
+            state.reuse_count
+        );
+    }
+
+    #[cfg(feature = "validate")]
+    pub(crate) fn reuse_count(&self) -> i32 {
+        self.state.lock().unwrap().reuse_count
     }
 }
 
