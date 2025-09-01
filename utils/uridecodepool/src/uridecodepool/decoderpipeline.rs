@@ -577,7 +577,9 @@ impl DecoderPipeline {
                             "Could not post message {message:?}: {e:?}"
                         );
                     }
-                } else if let TargetSrcState::InUse(target) = self.target_src() {
+                }
+
+                if let TargetSrcState::InUse(target) = self.target_src() {
                     if let Err(e) = target.post_message(message.to_owned()) {
                         gst::warning!(
                             CAT,
