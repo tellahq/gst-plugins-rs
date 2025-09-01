@@ -641,7 +641,10 @@ impl DecoderPipeline {
                             "Could not post message {message:?}: {e:?}"
                         );
                     }
-                } else if let Some(target) = self.target_src().element() {
+                }
+
+                // Also recurse to the current target
+                if let Some(target) = self.target_src().element() {
                     gst::log!(
                         CAT,
                         obj = self.pipeline_ref(),
