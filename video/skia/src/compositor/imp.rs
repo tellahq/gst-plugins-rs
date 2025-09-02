@@ -1,4 +1,3 @@
-use glib::ControlFlow;
 // SPDX-License-Identifier: MPL-2.0
 use gst::glib::Properties;
 use gst_base::subclass::prelude::*;
