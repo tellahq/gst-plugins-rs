@@ -178,7 +178,8 @@ gst-utils = { package = "gstreamer-utils", git = "https://github.com/thiblahute/
 gst-validate = { package = "gstreamer-validate", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
 gst-video = { package = "gstreamer-video", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
 gst-webrtc = { package = "gstreamer-webrtc", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
-gst-validate = { package = "gstreamer-validate", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
+gst-controller = { package = "gstreamer-controller", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
+ges = { package = "gstreamer-editing-services", git = "https://github.com/thiblahute/gstreamer-rs.git", branch = "sequence_1.26.0" }
 
 [patch."https://github.com/gtk-rs/gtk-rs-core"]
 glib = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "e6b43dc4d7cdb1ab62d6522c90807e6cd40973aa" }

@@ -55,6 +55,7 @@ option('livesync', type: 'feature', value: 'auto', description: 'Build livesync 
 option('togglerecord', type: 'feature', value: 'auto', description: 'Build togglerecord plugin')
 option('tracers', type: 'feature', value: 'auto', description: 'Build tracers plugin')
 option('uridecodepool', type: 'feature', value: 'auto', description: 'Build uridecodepool plugin')
+option('ges', type: 'feature', value: 'auto', description: 'Build ges plugin')
 option('uriplaylistbin', type: 'feature', value: 'auto', description: 'Build uriplaylistbin plugin')
 option('segmentclipper', type: 'feature', value: 'auto', description: 'Build segmentclipper plugin')
 option('validate', type: 'feature', value: 'auto', description: 'Build validate plugin')

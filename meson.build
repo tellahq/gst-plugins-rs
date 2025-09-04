@@ -128,6 +128,13 @@ plugins = {
   'segmentclipper': {'library': 'libgstsegmentclipper'},
 
   'file': {'library': 'libgstrsfile'},
+
+  'ges': {
+    'library': 'libgstrsges',
+    'gst-version': '>=1.27',
+    'extra-deps': {'gstreamer-validate-1.0': {'enabled-features': ['validate']}},
+  },
+
   'originalbuffer': {'library': 'libgstoriginalbuffer'},
   # sodium can have an external dependency, see below
   'threadshare': {
@@ -267,6 +274,11 @@ if sodium_opt.allowed()
   else
     plugins += sodium_plugin
   endif
+endif
+
+ges_option = get_option('ges')
+if ges_option.allowed()
+  deps += [['gstreamer-editing-services-1.0', 'gst-editing-services', 'ges_dep', 'libges', ges_option]]
 endif
 
 cc = meson.get_compiler('c')

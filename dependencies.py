@@ -29,6 +29,7 @@ RENAMES = {
     "rsaudiofx": "audiofx",
     "rsfile": "file",
     "rsflv": "flavors",
+    "rsges": "ges",
     "rsrtp": "rtp",
     "rsrtsp": "rtsp",
     "rswebp": "webp",
