@@ -365,6 +365,7 @@ impl ObjectImpl for PipelineSnapshot {
             settings.update_from_params(self, params);
         }
 
+        let has_websocket = settings.dots_viewer_ws_url.is_some();
         if settings.cleanup_mode == CleanupMode::Initial {
             drop(settings);
             self.cleanup_dots(&self.settings.read().unwrap().dot_dir.as_ref(), true);
@@ -375,8 +376,10 @@ impl ObjectImpl for PipelineSnapshot {
         self.register_hook(TracerHook::ElementNew);
         self.register_hook(TracerHook::ObjectDestroyed);
 
-        if let Err(err) = self.setup_signal() {
-            gst::warning!(CAT, imp = self, "failed to setup UNIX signals: {}", err);
+        if !has_websocket {
+            if let Err(err) = self.setup_signal() {
+                gst::warning!(CAT, imp = self, "failed to setup UNIX signals: {}", err);
+            }
         }
 
         self.setup_websocket();
