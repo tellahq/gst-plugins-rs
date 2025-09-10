@@ -399,8 +399,9 @@ packages = []
 features = []
 # examples to build
 examples = []
-# Add the plugin library files as output
+# Add the plugin library and .pc files as output
 output = []
+install_dirs = []
 
 auto_plugin_features = get_option('auto_plugin_features')
 gtk4_opt = get_option('gtk4')
@@ -451,6 +452,8 @@ if get_option('default_library') == 'static'
   }
 endif
 
+plugins_install_dir = get_option('libdir') / 'gstreamer-1.0'
+pkgconfig_install_dir = get_option('libdir') / 'pkgconfig'
 
 foreach plugin_name, details: plugins
   plugin_opt = get_variable(f'@plugin_name@_option', get_option(plugin_name))
@@ -589,6 +592,7 @@ foreach plugin_name, details: plugins
   endif
 
   lib = details.get('library')
+  output += [lib.substring(3) + '.pc']
   # No 'lib' suffix with MSVC
   if cc.get_argument_syntax() == 'msvc'
     lib = lib.substring(3)
@@ -599,15 +603,15 @@ foreach plugin_name, details: plugins
   if default_library in ['static', 'both']
     output += [lib + '.' + ext_static]
   endif
+  install_dirs += [pkgconfig_install_dir]
+  install_dirs += [plugins_install_dir]
+
 endforeach
 
 feature_args = []
 if features.length() > 0
   feature_args += ['--features', features]
 endif
-
-plugins_install_dir = get_option('libdir') / 'gstreamer-1.0'
-pkgconfig_install_dir = get_option('libdir') / 'pkgconfig'
 
 extra_args = []
 if get_option('doc').disabled()
@@ -640,7 +644,6 @@ subdir('validate-plugins')
 
 # This is used by GStreamer to static link Rust plugins into gst-full
 gst_plugins = []
-pc_files = []
 plugin_names = []
 foreach plugin : plugins
   plugin_name = fs.stem(plugin.full_path())
@@ -703,25 +706,10 @@ foreach plugin : plugins
     warning('Static plugin @0@ is known to fail. It will not be included in libgstreamer-full.'.format(plugin_name))
   else
     gst_plugins += dep
-    pc_files += [plugin_name + '.pc']
   endif
 endforeach
 
 # subdir('docs')
-
-# We don't need to pass a command as we depends on the target above
-# but it is currently mandatory ( https://github.com/mesonbuild/meson/issues/8059 )
-# so use python as it's guaranteed to be present on any setup
-if pc_files.length() > 0
-  custom_target('gst-plugins-rs-pc-files',
-    build_by_default: true,
-    output: pc_files,
-    console: true,
-    install: true,
-    install_dir: pkgconfig_install_dir,
-    depends: rs_plugins,
-    command: [python, '-c', '""'])
-endif
 
 if get_option('webrtc').allowed()
   custom_target('gst-webrtc-signalling-server',
