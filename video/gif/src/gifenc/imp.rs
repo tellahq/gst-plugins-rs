@@ -103,6 +103,14 @@ impl State {
             context: None,
         }
     }
+
+    /// Check if the essential encoding parameters (width, height, format) have changed
+    /// compared to the current state. Returns true if a reset is needed.
+    pub fn needs_reset(&self, new_video_info: &gst_video::VideoInfo) -> bool {
+        self.video_info.width() != new_video_info.width()
+            || self.video_info.height() != new_video_info.height()
+            || self.video_info.format() != new_video_info.format()
+    }
     pub fn reset(&mut self, settings: Settings) {
         self.cache.clear();
         self.gif_pts = None;
@@ -262,17 +270,37 @@ impl VideoEncoderImpl for GifEnc {
         &self,
         state: &gst_video::VideoCodecState<'static, gst_video::video_codec_state::Readable>,
     ) -> Result<(), gst::LoggableError> {
-        self.flush_encoder()
-            .map_err(|_| gst::loggable_error!(CAT, "Failed to drain"))?;
-
         let video_info = state.info();
         gst::debug!(CAT, imp = self, "Setting format {:?}", video_info);
 
-        {
-            let mut state = State::new(video_info);
+        // Check if we need to reset the encoder based on essential parameters
+        let needs_reset = {
+            let current_state = self.state.borrow();
+            match current_state.as_ref() {
+                Some(current) => current.needs_reset(&video_info),
+                None => true, // Always reset if no state exists
+            }
+        };
+
+        if needs_reset {
+            gst::debug!(
+                CAT,
+                imp = self,
+                "Essential format parameters changed, flushing and resetting encoder"
+            );
+            self.flush_encoder()
+                .map_err(|_| gst::loggable_error!(CAT, "Failed to drain"))?;
+
+            let mut new_state = State::new(video_info);
             let settings = self.settings.lock().unwrap();
-            state.reset(*settings);
-            *self.state.borrow_mut() = Some(state);
+            new_state.reset(*settings);
+            *self.state.borrow_mut() = Some(new_state);
+        } else {
+            gst::debug!(CAT, imp = self, "Only non-essential parameters changed (colorimetry, framerate, etc.), keeping encoder state");
+            // Update the video_info in the existing state without resetting the encoder
+            if let Some(ref mut current_state) = *self.state.borrow_mut() {
+                current_state.video_info = video_info;
+            }
         }
 
         let instance = self.obj();
