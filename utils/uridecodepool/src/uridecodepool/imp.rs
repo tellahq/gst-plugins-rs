@@ -370,7 +370,28 @@ impl UriDecodePoolSrc {
                             "Got error message: {s} from {decoderpipe:?} (uri: {:?})",
                             this.settings.lock().unwrap().uri
                         );
-                        if let Err(e) = obj.post_message(s.message().to_owned()) {
+
+                        let error = s.error().clone();
+                        let new_msg = format!(
+                            "({}) {}",
+                            obj.uri().unwrap_or("No uri".to_string()),
+                            error.message()
+                        );
+                        // There is no way to create a GError from a GQuark and a code
+                        // so we clone the error and replace the message
+                        unsafe {
+                            let gerror: *mut glib::ffi::GError = error.to_glib_none().0;
+
+                            glib::ffi::g_free((*gerror).message as *mut _);
+                            (*gerror).message = new_msg.to_glib_full();
+                        }
+
+                        let msg = gst::message::Error::builder_from_error(error)
+                            .debug_if_some(s.debug().as_deref())
+                            .details_if_some(s.details().map(|s| s.to_owned()))
+                            .build();
+
+                        if let Err(e) = obj.post_message(msg) {
                             gst::error!(CAT, "Could not post error message: {e:?}");
                         }
                     }
