@@ -116,7 +116,7 @@ impl SkiaReshapeGL {
         }
 
         let canvas = out_surface.canvas();
-        self.reshape(canvas, &image)
+        self.reshape(canvas, &image, Some(skia_context))
             .map_err(|e| gst::loggable_error!(CAT, "Failed to reshape: {}", e))?;
 
         /* Execute the drawing commands and submit them to the GPU */
