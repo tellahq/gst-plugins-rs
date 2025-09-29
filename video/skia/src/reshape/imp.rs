@@ -239,6 +239,6 @@ impl VideoFilterImpl for SkiaReshape {
             skia::surface::surfaces::wrap_pixels(&out_img_info, plane_data, row_bytes, None)
                 .ok_or(gst::FlowError::Error)?;
 
-        self.reshape(out_surface.canvas(), &image)
+        self.reshape(out_surface.canvas(), &image, None)
     }
 }

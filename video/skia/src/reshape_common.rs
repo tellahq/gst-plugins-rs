@@ -2,6 +2,7 @@
 use ges::prelude::*;
 use gst::{glib, subclass::prelude::*};
 use gst_video::{prelude::*, subclass::prelude::*};
+use tracing::*;
 
 use std::sync::LazyLock;
 
@@ -57,7 +58,7 @@ pub struct State {
 #[derive(Debug, Copy, Clone)]
 pub struct TranslationRects {
     // The rectangle that is used to crop the source image
-    pub src_with_cropping_applied: skia::Rect,
+    pub src_with_cropping_applied: Option<skia::Rect>,
 
     // The rectangle that is used to draw the image
     pub dst_rect: skia::Rect,
@@ -93,27 +94,28 @@ pub(crate) fn reshape_properties() -> Vec<glib::ParamSpec> {
             .default_value(0)
             .mutable_playing()
             .build(),
-        glib::ParamSpecInt::builder("left")
+        glib::ParamSpecInt::builder("crop-left")
             .nick("Crop left in pixels")
             .blurb("Crop left in pixels")
             .default_value(0)
+            .controllable()
             .mutable_playing()
             .build(),
-        glib::ParamSpecInt::builder("right")
+        glib::ParamSpecInt::builder("crop-right")
             .nick("Crop right in pixels")
             .blurb("Crop right in pixels")
             .default_value(0)
             .mutable_playing()
             .controllable()
             .build(),
-        glib::ParamSpecInt::builder("top")
+        glib::ParamSpecInt::builder("crop-top")
             .nick("Crop top in pixels")
             .blurb("Crop top in pixels")
             .default_value(0)
             .mutable_playing()
             .controllable()
             .build(),
-        glib::ParamSpecInt::builder("bottom")
+        glib::ParamSpecInt::builder("crop-bottom")
             .nick("Crop bottom in pixels")
             .blurb("Crop bottom in pixels")
             .default_value(0)
@@ -147,16 +149,16 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
             "padding-px" => {
                 settings.padding_px = value.get().expect("type checked upstream");
             }
-            "left" => {
+            "crop-left" => {
                 settings.crop_left = value.get().expect("type checked upstream");
             }
-            "right" => {
+            "crop-right" => {
                 settings.crop_right = value.get().expect("type checked upstream");
             }
-            "top" => {
+            "crop-top" => {
                 settings.crop_top = value.get().expect("type checked upstream");
             }
-            "bottom" => {
+            "crop-bottom" => {
                 settings.crop_bottom = value.get().expect("type checked upstream");
             }
             "disable-crop-optimization" => {
@@ -172,10 +174,10 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
             "border-radius-px" => settings.border_radius_px.to_value(),
             "corner-smoothing-pct" => settings.corner_smoothing_pct.to_value(),
             "padding-px" => settings.padding_px.to_value(),
-            "left" => settings.crop_left.to_value(),
-            "right" => settings.crop_right.to_value(),
-            "top" => settings.crop_top.to_value(),
-            "bottom" => settings.crop_bottom.to_value(),
+            "crop-left" => settings.crop_left.to_value(),
+            "crop-right" => settings.crop_right.to_value(),
+            "crop-top" => settings.crop_top.to_value(),
+            "crop-bottom" => settings.crop_bottom.to_value(),
             "disable-crop-optimization" => settings.disable_crop_optimization.to_value(),
             _ => unimplemented!(),
         }
@@ -185,6 +187,7 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
         &self,
         canvas: &skia::Canvas,
         image: &skia::Image,
+        mut direct: Option<&mut skia::gpu::DirectContext>,
     ) -> Result<gst::FlowSuccess, gst::FlowError> {
         let crop_optimization_enabled = !self.settings().disable_crop_optimization;
         gst::trace!(
@@ -206,18 +209,54 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
         let mut paint = skia::Paint::default();
         paint.set_anti_alias(true);
 
-        let src_rect = Some((
-            &rects.src_with_cropping_applied,
-            skia::canvas::SrcRectConstraint::Strict,
-        ));
+        let cropped_image =
+            if let Some(ref src_with_cropping_applied) = rects.src_with_cropping_applied {
+                let subset_result =
+                    image.make_subset(direct.as_deref_mut(), src_with_cropping_applied.round());
+
+                match (subset_result, direct) {
+                    (Some(img), _) => img,
+                    (None, Some(direct_ctx)) => {
+                        // Create a 1x1 transparent fallback image backed on GPU
+                        let data = vec![0u8; 4];
+                        let info = skia::ImageInfo::new_n32_premul(skia::ISize::new(1, 1), None);
+
+                        let raster_image =
+                            skia::images::raster_from_data(&info, skia::Data::new_copy(&data), 4)
+                                .expect("Failed to create empty raster image");
+                        // Create fallback image backed on GPU
+                        skia::gpu::images::texture_from_image(
+                            direct_ctx,
+                            &raster_image,
+                            skia::gpu::Mipmapped::No,
+                            skia::gpu::Budgeted::No,
+                        )
+                        .unwrap_or(raster_image)
+                    }
+                    (None, None) => {
+                        let settings = self.settings();
+                        gst::debug!(
+                            CAT,
+                            "Transparent fallback image input dimensions: {}x{} - settings: {:#?}",
+                            image.width(),
+                            image.height(),
+                            *settings
+                        );
+                        skia::images::raster_from_data(
+                            &skia::ImageInfo::new_n32_premul(skia::ISize::new(1, 1), None),
+                            skia::Data::new_copy(&vec![0u8; 4]),
+                            4,
+                        )
+                        .expect("Failed to create empty raster image")
+                    }
+                }
+            } else {
+                image.clone()
+            };
 
         canvas.draw_image_rect_with_sampling_options(
-            image,
-            if crop_optimization_enabled {
-                src_rect
-            } else {
-                None
-            },
+            cropped_image,
+            None,
             rects.dst_rect,
             skia::SamplingOptions::new(skia::FilterMode::Linear, skia::MipmapMode::Linear),
             &paint,
@@ -613,7 +652,14 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
             compositor_size
         };
 
-        let (padding_px, mut src_crop_left, crop_right, mut src_crop_top, crop_bottom) = {
+        let (
+            padding_px,
+            mut src_crop_left,
+            crop_right,
+            mut src_crop_top,
+            crop_bottom,
+            user_cropped,
+        ) = {
             let settings = self.settings();
             (
                 settings.padding_px as f32,
@@ -621,6 +667,10 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
                 settings.crop_right as f32,
                 settings.crop_top as f32,
                 settings.crop_bottom as f32,
+                settings.crop_left != 0
+                    || settings.crop_right != 0
+                    || settings.crop_top != 0
+                    || settings.crop_bottom != 0,
             )
         };
 
@@ -694,7 +744,7 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
 
         let crop_optimization_enabled = !self.settings().disable_crop_optimization;
 
-        if crop_optimization_enabled {
+        let src_with_cropping_applied = if crop_optimization_enabled {
             let width_factor = (in_info.width() as f32) / dst_width;
             let height_factor = in_info.height() as f32 / dst_height;
 
@@ -755,16 +805,31 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
             if compositor_rect.bottom() > compositor_size.height {
                 out_height += compositor_size.height - compositor_rect.bottom();
             }
+
+            Some(skia::Rect::from_ltrb(
+                src_crop_left,
+                src_crop_top,
+                src_width,
+                src_height,
+            ))
         } else {
             dst_left += padding_px;
             dst_top += padding_px;
 
             original_dst_left += padding_px;
             original_dst_top += padding_px;
-        }
 
-        let src_with_cropping_applied =
-            skia::Rect::from_ltrb(src_crop_left, src_crop_top, src_width, src_height);
+            if user_cropped {
+                Some(skia::Rect::from_ltrb(
+                    src_crop_left,
+                    src_crop_top,
+                    in_info.width() as f32 - crop_right,
+                    in_info.height() as f32 - crop_bottom,
+                ))
+            } else {
+                None
+            }
+        };
 
         if dst_top < 1.0 {
             dst_top = 0.0;
