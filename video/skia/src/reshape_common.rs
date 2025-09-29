@@ -213,7 +213,11 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
 
         canvas.draw_image_rect_with_sampling_options(
             image,
-            src_rect,
+            if crop_optimization_enabled {
+                src_rect
+            } else {
+                None
+            },
             rects.dst_rect,
             skia::SamplingOptions::new(skia::FilterMode::Linear, skia::MipmapMode::Linear),
             &paint,
