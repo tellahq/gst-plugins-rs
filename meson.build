@@ -387,7 +387,12 @@ examples = []
 # Add the plugin library files as output
 output = []
 
-if get_option('gtk4').allowed()
+auto_plugin_features = get_option('auto_plugin_features')
+gtk4_opt = get_option('gtk4')
+if gtk4_opt.auto()
+  gtk4_opt = auto_plugin_features
+endif
+if gtk4_opt.allowed()
   if glib_dep.version().version_compare('>=2.74')
     features += ['glib/v2_74', 'gio/v2_74']
   elif glib_dep.version().version_compare('>=2.72')
@@ -409,7 +414,11 @@ if get_option('gtk4').allowed()
   endif
 endif
 
-if get_option('rav1e').allowed()
+rav1e_opt = get_option('rav1e')
+if rav1e_opt.auto()
+  rav1e_opt = auto_plugin_features
+endif
+if rav1e_opt.allowed()
   nasm = find_program('nasm', required: false)
   if nasm.found()
     features += 'gst-plugin-rav1e/asm'
@@ -427,7 +436,6 @@ if get_option('default_library') == 'static'
   }
 endif
 
-auto_plugin_features = get_option('auto_plugin_features')
 
 foreach plugin_name, details: plugins
   plugin_opt = get_variable(f'@plugin_name@_option', get_option(plugin_name))
