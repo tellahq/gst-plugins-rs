@@ -98,6 +98,7 @@ pub(crate) fn reshape_properties() -> Vec<glib::ParamSpec> {
             .blurb("Crop left in pixels")
             .default_value(0)
             .mutable_playing()
+            .controllable()
             .build(),
         glib::ParamSpecInt::builder("right")
             .nick("Crop right in pixels")
