@@ -281,12 +281,6 @@ impl GLBaseFilterImpl for SkiaReshapeGL {
             }
         };
 
-        // FIXME: Implement support for other platforms, there is no good reason
-        // why it doesn't work
-        if context.gl_platform() != gst_gl::GLPlatform::EGL {
-            return Err(gst::loggable_error!(CAT, "Only EGL platform is supported."));
-        }
-
         let display = context.display();
         let our_context = gst_gl::GLContext::new(&display);
 
