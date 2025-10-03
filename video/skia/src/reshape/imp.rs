@@ -17,6 +17,11 @@ static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
     )
 });
 
+// TODO: Implement transform_ip to allow in-place transformation when ONLY the "draw"
+// signal is used (without geometric transformations like crop/padding/border-radius).
+// This would avoid unnecessary buffer copies when skiareshape is used solely for
+// custom drawing on top of the video without any reshaping.
+
 #[derive(Default, Debug)]
 pub struct SkiaReshape {
     settings: Mutex<Settings>,
