@@ -9,11 +9,15 @@
  */
 use gst::glib;
 
+pub mod boxed_types;
 mod compositor;
 mod gl;
 mod reshape;
 mod reshape_common;
 mod reshapegl;
+
+// Re-export boxed types at crate level
+pub use boxed_types::{BufferRef, SkiaCanvas, SkiaContext, SkiaImage};
 
 fn plugin_init(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
     compositor::register(plugin)?;

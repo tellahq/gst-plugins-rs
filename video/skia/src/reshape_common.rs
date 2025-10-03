@@ -1,8 +1,9 @@
 #[cfg(feature = "ges")]
 use ges::prelude::*;
-use gst::{glib, subclass::prelude::*};
-use gst_video::{prelude::*, subclass::prelude::*};
-use tracing::*;
+use gst::{glib, prelude::*, subclass::prelude::*};
+use gst_base::prelude::*;
+use gst_video::subclass::prelude::*;
+use skia;
 
 use std::sync::LazyLock;
 
@@ -132,6 +133,19 @@ pub(crate) fn reshape_properties() -> Vec<glib::ParamSpec> {
     ]
 }
 
+pub fn reshape_signals() -> Vec<glib::subclass::Signal> {
+    vec![glib::subclass::Signal::builder("draw")
+        .param_types([
+            crate::BufferRef::static_type(),
+            gst_video::VideoInfo::static_type(),
+            crate::SkiaCanvas::static_type(),
+            crate::SkiaContext::static_type(),
+        ])
+        .return_type::<()>()
+        .flags(glib::SignalFlags::RUN_LAST)
+        .build()]
+}
+
 /// Common functionality for reshape implementations
 pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
     fn settings(&self) -> std::sync::MutexGuard<'_, Settings>;
@@ -185,6 +199,8 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
 
     fn reshape(
         &self,
+        buffer: &crate::BufferRef,
+        video_info: &gst_video::VideoInfo,
         canvas: &skia::Canvas,
         image: &skia::Image,
         mut direct: Option<&mut skia::gpu::DirectContext>,
@@ -214,7 +230,7 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
                 let subset_result =
                     image.make_subset(direct.as_deref_mut(), src_with_cropping_applied.round());
 
-                match (subset_result, direct) {
+                match (subset_result, &mut direct) {
                     (Some(img), _) => img,
                     (None, Some(direct_ctx)) => {
                         // Create a 1x1 transparent fallback image backed on GPU
@@ -262,13 +278,23 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
             &paint,
         );
 
-        // Clip out the rounded corners
+        // Clip out the rounded corners if border radius is set
         let border_radius = self.settings().border_radius_px as f32;
-        let rounded_dst_rect =
-            skia::RRect::new_rect_xy(rects.original_dst_rect, border_radius, border_radius);
+        if border_radius > 0.0 {
+            let rounded_dst_rect =
+                skia::RRect::new_rect_xy(rects.original_dst_rect, border_radius, border_radius);
 
-        canvas.clip_rrect(rounded_dst_rect, skia::ClipOp::Difference, true);
-        canvas.clear(skia::Color::TRANSPARENT);
+            canvas.clip_rrect(rounded_dst_rect, skia::ClipOp::Difference, true);
+            canvas.clear(skia::Color::TRANSPARENT);
+        }
+
+        // Emit the draw signal to allow custom drawing on the canvas
+        let canvas_boxed = crate::SkiaCanvas::new(canvas);
+        let context_boxed = crate::SkiaContext::new(direct);
+        self.obj().emit_by_name::<()>(
+            "draw",
+            &[buffer, &video_info, &canvas_boxed, &context_boxed],
+        );
 
         Ok(gst::FlowSuccess::Ok)
     }
@@ -370,7 +396,10 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
 
         // Update FrameCompositionMeta to also have the floored/ceiled values.
         let compositor_position = self.state().compositor_position;
+        #[cfg(feature = "ges")]
         let (mut croppedx, mut croppedy): (f64, f64) = (0.0, 0.0);
+        #[cfg(not(feature = "ges"))]
+        let (croppedx, croppedy): (f64, f64) = (0.0, 0.0);
         if let Some(compositor_rect) = compositor_position {
             let rects = self.compute_src_image_and_dest_rects(None);
             #[cfg(feature = "ges")]

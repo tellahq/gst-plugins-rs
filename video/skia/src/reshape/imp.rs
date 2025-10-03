@@ -56,6 +56,12 @@ impl ObjectImpl for SkiaReshape {
     fn set_property(&self, _id: usize, value: &glib::Value, pspec: &glib::ParamSpec) {
         self.reshape_set_property(_id, value, pspec)
     }
+
+    fn signals() -> &'static [glib::subclass::Signal] {
+        static SIGNALS: LazyLock<Vec<glib::subclass::Signal>> =
+            LazyLock::new(|| crate::reshape_common::reshape_signals());
+        SIGNALS.as_ref()
+    }
 }
 
 impl GstObjectImpl for SkiaReshape {}
@@ -203,6 +209,8 @@ impl VideoFilterImpl for SkiaReshape {
             None,
         );
 
+        // Get a pointer to the buffer before we mutably borrow the frame
+        let buffer = crate::BufferRef::new(outframe.buffer());
         let row_bytes = outframe.info().stride()[0] as usize;
 
         if row_bytes < out_img_info.min_row_bytes() {
@@ -239,6 +247,7 @@ impl VideoFilterImpl for SkiaReshape {
             skia::surface::surfaces::wrap_pixels(&out_img_info, plane_data, row_bytes, None)
                 .ok_or(gst::FlowError::Error)?;
 
-        self.reshape(out_surface.canvas(), &image, None)
+        let canvas = out_surface.canvas();
+        self.reshape(&buffer, &out_info, canvas, &image, None)
     }
 }
