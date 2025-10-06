@@ -118,7 +118,7 @@ impl SkiaReshapeGL {
             return Err(gst::loggable_error!(CAT, "Skia context has been abandoned"));
         }
 
-        if !image.is_valid(&mut *skia_context) {
+        if !image.is_valid(Some(skia_context.as_recorder())) {
             return Err(gst::loggable_error!(CAT, "Input image is invalid"));
         }
 

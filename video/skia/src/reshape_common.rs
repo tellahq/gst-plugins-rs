@@ -1,7 +1,6 @@
 #[cfg(feature = "ges")]
 use ges::prelude::*;
-use gst::{glib, prelude::*, subclass::prelude::*};
-use gst_base::prelude::*;
+use gst::glib;
 use gst_video::subclass::prelude::*;
 use skia;
 
@@ -227,8 +226,11 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
 
         let cropped_image =
             if let Some(ref src_with_cropping_applied) = rects.src_with_cropping_applied {
-                let subset_result =
-                    image.make_subset(direct.as_deref_mut(), src_with_cropping_applied.round());
+                let subset_result = image.make_subset(
+                    direct.as_deref_mut().map(|ctx| ctx.as_recorder() as &mut dyn skia::Recorder),
+                    src_with_cropping_applied.round(),
+                    Default::default(),
+                );
 
                 match (subset_result, &mut direct) {
                     (Some(img), _) => img,
