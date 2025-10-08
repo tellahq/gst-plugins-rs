@@ -9,7 +9,7 @@ license = "MPL-2.0"
 description = "GStreamer skia plugin"
 
 [dependencies]
-skia = { package = "skia-safe", version = "0.89", features = ["gpu", "gl"] }
+skia = { package = "skia-safe", git = "https://github.com/thiblahute/rust-skia.git", branch="pkgconfig", features = ["gpu", "gl"] }
 gst.workspace = true
 gst-base.workspace = true
 gst-video = { workspace = true, features = ["v1_20"] }
