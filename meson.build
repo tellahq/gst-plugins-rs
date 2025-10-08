@@ -294,6 +294,17 @@ if ges_option.allowed()
   deps += [['gstreamer-editing-services-1.0', 'gst-editing-services', 'ges_dep', 'libges', ges_option]]
 endif
 
+skia_opt = get_option('skia')
+if skia_opt.allowed()
+  # Try to use Skia from Meson subproject/wrap
+  skia_dep_from_meson = dependency('skia', required: false, allow_fallback: true,
+    default_options: ['gl=enabled', 'textlayout=enabled'])
+  if skia_dep_from_meson.found() and skia_dep_from_meson.type_name() == 'internal'
+    message('Using Skia from Meson')
+    extra_env += {'SKIA_USE_PKG_CONFIG': '1'}
+  endif
+endif
+
 cc = meson.get_compiler('c')
 csound_option = get_option('csound')
 if csound_option.allowed()
