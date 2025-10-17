@@ -57,6 +57,7 @@ option('tracers', type: 'feature', value: 'auto', description: 'Build tracers pl
 option('uridecodepool', type: 'feature', value: 'auto', description: 'Build uridecodepool plugin')
 option('uriplaylistbin', type: 'feature', value: 'auto', description: 'Build uriplaylistbin plugin')
 option('segmentclipper', type: 'feature', value: 'auto', description: 'Build segmentclipper plugin')
+option('validate', type: 'feature', value: 'auto', description: 'Build validate plugin')
 
 # video
 option('cdg', type: 'feature', value: 'auto', description: 'Build cdg plugin')

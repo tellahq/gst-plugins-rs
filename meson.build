@@ -235,6 +235,9 @@ plugins = {
     'library': 'libgstskia',
     'features': skia_features,
   },
+  'validate': {
+    'library': 'libgstrsvalidate',
+    }, # Only used to handle the validate feature option
   'speechmatics': {'library': 'libgstspeechmatics'},
   'vvdec': {
     'library': 'libgstvvdec',
@@ -601,6 +604,9 @@ extra_env += {'RUSTC': ' '.join(rustc.cmd_array())}
 # Build plugins in the plugins subdirectory
 subdir('plugins')
 
+# Build validate plugins in separate directory
+subdir('validate-plugins')
+
 # This is used by GStreamer to static link Rust plugins into gst-full
 gst_plugins = []
 plugin_names = []
@@ -668,7 +674,7 @@ foreach plugin : plugins
   endif
 endforeach
 
-subdir('docs')
+# subdir('docs')
 
 if get_option('webrtc').allowed()
   custom_target('gst-webrtc-signalling-server',
