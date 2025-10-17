@@ -38,6 +38,7 @@ RENAMES = {
     "rsclosedcaption": "closedcaption",
     "rswebrtc": "webrtc",
     "rspng": "png",
+    "rsvalidate": "validate",
     "rsvideofx": "videofx",
     "rsinter": "inter",
     "textahead": "ahead",

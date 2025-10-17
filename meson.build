@@ -228,6 +228,9 @@ plugins = {
     ],
   },
   'skia': {'library': 'libgstskia'},
+  'validate': {
+    'library': 'libgstrsvalidate',
+    }, # Only used to handle the validate feature option
   'speechmatics': {'library': 'libgstspeechmatics'},
   'vvdec': {
     'library': 'libgstvvdec',
@@ -643,6 +646,9 @@ if output.length() > 0
   plugins = rs_plugins.to_list()
 endif
 
+# Build validate plugins in separate directory
+subdir('validate-plugins')
+
 # This is used by GStreamer to static link Rust plugins into gst-full
 gst_plugins = []
 pc_files = []
@@ -712,7 +718,7 @@ foreach plugin : plugins
   endif
 endforeach
 
-subdir('docs')
+# subdir('docs')
 
 # We don't need to pass a command as we depends on the target above
 # but it is currently mandatory ( https://github.com/mesonbuild/meson/issues/8059 )
