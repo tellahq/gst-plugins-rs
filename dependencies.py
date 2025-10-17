@@ -33,6 +33,7 @@ RENAMES = {
     'rsonvif': 'onvif',
     'rsrelationmeta': 'relationmeta',
     'rstracers': 'tracers',
+    'rsvalidate': 'validate',
     'rsclosedcaption': 'closedcaption',
     'rswebrtc': 'webrtc',
     'rspng': 'png',
