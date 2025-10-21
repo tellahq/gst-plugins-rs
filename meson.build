@@ -273,6 +273,17 @@ if sodium_opt.allowed()
   endif
 endif
 
+skia_opt = get_option('skia')
+if skia_opt.allowed()
+  # Try to use Skia from Meson subproject/wrap
+  skia_dep_from_meson = dependency('skia', required: false, allow_fallback: true,
+    default_options: ['gl=enabled', 'textlayout=enabled'])
+  if skia_dep_from_meson.found() and skia_dep_from_meson.type_name() == 'internal'
+    message('Using Skia from Meson')
+    extra_env += {'SKIA_USE_PKG_CONFIG': '1'}
+  endif
+endif
+
 cc = meson.get_compiler('c')
 csound_option = get_option('csound')
 if csound_option.allowed()
@@ -710,18 +721,20 @@ if get_option('examples').allowed() and examples.length() > 0
 endif
 
 if get_option('tests').allowed()
-  test('tests',
-    cargo_wrapper,
-    env: extra_env,
-    args: ['test',
-      meson.current_build_dir(),
-      meson.current_source_dir(),
-      meson.global_build_root(),
-      target,
-      get_option('prefix'),
-      get_option('libdir'),
-      '--packages', packages],
-    timeout: 600)
+  foreach package: packages
+    test(package.replace('gst-plugin-', ''),
+      cargo_wrapper,
+      env: extra_env,
+      args: ['test',
+        meson.current_build_dir(),
+        meson.current_source_dir(),
+        meson.global_build_root(),
+        target,
+        get_option('prefix'),
+        get_option('libdir'),
+        '--packages', package],
+      timeout: 600)
+  endforeach
 endif
 
 summary({

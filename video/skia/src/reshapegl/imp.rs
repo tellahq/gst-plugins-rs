@@ -19,6 +19,11 @@ static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
     )
 });
 
+// TODO: Implement transform_ip to allow in-place transformation when ONLY the "draw"
+// signal is used (without geometric transformations like crop/padding/border-radius).
+// This would avoid unnecessary buffer copies when skiareshape is used solely for
+// custom drawing on top of the video without any reshaping.
+
 #[derive(Debug, Clone)]
 struct SkContext(skia::gpu::DirectContext);
 
@@ -47,6 +52,8 @@ impl ReshapeCommon for SkiaReshapeGL {
 impl SkiaReshapeGL {
     fn render_with_skia(
         &self,
+        buffer: &crate::BufferRef,
+        video_info: &gst_video::VideoInfo,
         skia_context: &mut skia::gpu::DirectContext,
         input_tex_id: u32,
         output_tex_id: u32,
@@ -111,12 +118,12 @@ impl SkiaReshapeGL {
             return Err(gst::loggable_error!(CAT, "Skia context has been abandoned"));
         }
 
-        if !image.is_valid(&mut *skia_context) {
+        if !image.is_valid(Some(skia_context.as_recorder())) {
             return Err(gst::loggable_error!(CAT, "Input image is invalid"));
         }
 
         let canvas = out_surface.canvas();
-        self.reshape(canvas, &image, Some(skia_context))
+        self.reshape(buffer, video_info, canvas, &image, Some(skia_context))
             .map_err(|e| gst::loggable_error!(CAT, "Failed to reshape: {}", e))?;
 
         /* Execute the drawing commands and submit them to the GPU */
@@ -166,6 +173,12 @@ impl ObjectImpl for SkiaReshapeGL {
 
     fn set_property(&self, _id: usize, value: &glib::Value, pspec: &glib::ParamSpec) {
         self.reshape_set_property(_id, value, pspec)
+    }
+
+    fn signals() -> &'static [glib::subclass::Signal] {
+        static SIGNALS: LazyLock<Vec<glib::subclass::Signal>> =
+            LazyLock::new(|| crate::reshape_common::reshape_signals());
+        SIGNALS.as_ref()
     }
 }
 
@@ -273,12 +286,6 @@ impl GLBaseFilterImpl for SkiaReshapeGL {
             }
         };
 
-        // FIXME: Implement support for other platforms, there is no good reason
-        // why it doesn't work
-        if context.gl_platform() != gst_gl::GLPlatform::EGL {
-            return Err(gst::loggable_error!(CAT, "Only EGL platform is supported."));
-        }
-
         let display = context.display();
         let our_context = gst_gl::GLContext::new(&display);
 
@@ -338,7 +345,7 @@ impl GLBaseFilterImpl for SkiaReshapeGL {
 }
 
 impl GLFilterImpl for SkiaReshapeGL {
-    const MODE: GLFilterMode = GLFilterMode::Texture;
+    const MODE: GLFilterMode = GLFilterMode::Buffer;
 
     fn transform_internal_caps(
         &self,
@@ -349,13 +356,9 @@ impl GLFilterImpl for SkiaReshapeGL {
         Some(caps.clone())
     }
 
-    #[instrument(skip(self))]
-    fn filter_texture(
-        &self,
-        input: &gst_gl::GLMemory,
-        output: &gst_gl::GLMemory,
-    ) -> Result<(), gst::LoggableError> {
-        gst::trace!(CAT, imp = self, "Processing GL texture");
+    #[instrument(skip(self, input, output))]
+    fn filter(&self, input: &gst::Buffer, output: &gst::Buffer) -> Result<(), gst::LoggableError> {
+        gst::trace!(CAT, imp = self, "Processing GL buffer");
 
         let state = self.state.lock().unwrap();
         let in_info = state
@@ -370,12 +373,22 @@ impl GLFilterImpl for SkiaReshapeGL {
             .clone();
         drop(state);
 
-        // Get input and output texture IDs
-        let input_tex_id = input.texture_id();
-        let output_tex_id = output.texture_id();
+        // Get input GLMemory directly from buffer
+        let in_mem = input
+            .peek_memory(0)
+            .downcast_memory_ref::<gst_gl::GLMemory>()
+            .ok_or_else(|| gst::loggable_error!(CAT, "Input memory is not GLMemory"))?;
 
-        let in_info = in_info.clone();
-        let out_info = out_info.clone();
+        // Get output GLMemory directly from buffer
+        let out_mem = output
+            .peek_memory(0)
+            .downcast_memory_ref::<gst_gl::GLMemory>()
+            .ok_or_else(|| gst::loggable_error!(CAT, "Output memory is not GLMemory"))?;
+
+        // Get texture IDs
+        let input_tex_id = in_mem.texture_id();
+        let output_tex_id = out_mem.texture_id();
+
         let gl_result: std::sync::Arc<std::sync::Mutex<Result<(), gst::LoggableError>>> =
             std::sync::Arc::new(std::sync::Mutex::new(Ok(())));
         self.gstglcontext
@@ -402,11 +415,13 @@ impl GLFilterImpl for SkiaReshapeGL {
                     let skia_context_mutex = this.context.lock().unwrap();
                     let mut skia_context = skia_context_mutex
                         .as_ref()
-                        .expect("No Skia context while filtering texture")
+                        .expect("No Skia context while filtering")
                         .clone();
 
                     // Call render_with_skia in the dedicated context
                     let render_result = this.render_with_skia(
+                        &crate::BufferRef::new(output),
+                        &out_info,
                         &mut skia_context.0,
                         input_tex_id,
                         output_tex_id,
