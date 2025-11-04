@@ -58,6 +58,9 @@ if get_option('tests').allowed() and validate_option.allowed()
   if gst_tester.found()
     tests = [
       'check_qrcode_content',
+      'rsvideoconvert_simple',
+      'rsvideoconvert',
+      'rgb_to_yuv_conversions',
     ]
 
     test_env = environment()
