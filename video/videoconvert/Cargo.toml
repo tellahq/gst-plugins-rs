@@ -1,25 +1,24 @@
 [package]
-name = "gst-plugin-validate"
+name = "gst-plugin-videoconvert"
 version.workspace = true
 authors = ["Thibault Saunier <tsaunier@igalia.com>"]
-license = "MPL-2.0"
-description = "GStreamer Validate Plugin in rust"
 repository.workspace = true
+license = "MPL-2.0"
 edition.workspace = true
 rust-version.workspace = true
+description = "GStreamer Rust Video Format Converter"
 
 [dependencies]
 gst.workspace = true
 gst-base.workspace = true
 gst-video.workspace = true
-gst-validate.workspace = true
-gst-videoconverter = { path = "../../video/videoconvert/videoconverter" }
-rqrr = { version = "0.7", default-features = false, features = ["img"] }
-image = { version = "0.25", default-features = false, features = ["png"] }
-image-compare = "0.4"
+gst-videoconverter = { path = "./videoconverter" }
+
+[dev-dependencies]
+gst-check.workspace = true
 
 [lib]
-name = "gstrsvalidate"
+name = "gstrsvideoconvert"
 crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
 
@@ -38,9 +37,9 @@ min_version = "0.9.21"
 enabled = false
 
 [package.metadata.capi.library]
-install_subdir = "gstreamer-1.0/validate/"
+install_subdir = "gstreamer-1.0"
 versioning = false
 import_library = false
 
 [package.metadata.capi.pkg_config]
-requires_private = "gstreamer-1.0, gstreamer-base-1.0, gstreamer-video-1.0, gstreamer-validate-1.0, gobject-2.0, glib-2.0, gmodule-2.0"
+requires_private = "gstreamer-1.0, gstreamer-base-1.0, gstreamer-video-1.0, gobject-2.0, glib-2.0, gmodule-2.0"

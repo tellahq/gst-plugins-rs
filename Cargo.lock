@@ -3413,6 +3413,7 @@ name = "gst-plugin-validate"
 version = "0.14.0-alpha.1"
 dependencies = [
  "gst-plugin-version-helper",
+ "gst-videoconverter",
  "gstreamer",
  "gstreamer-base",
  "gstreamer-validate",
@@ -3428,6 +3429,18 @@ version = "0.8.1"
 dependencies = [
  "chrono",
  "toml_edit",
+]
+
+[[package]]
+name = "gst-plugin-videoconvert"
+version = "0.14.0-alpha.1"
+dependencies = [
+ "gst-plugin-version-helper",
+ "gst-videoconverter",
+ "gstreamer",
+ "gstreamer-base",
+ "gstreamer-check",
+ "gstreamer-video",
 ]
 
 [[package]]
@@ -3576,6 +3589,16 @@ dependencies = [
  "parse_link_header",
  "reqwest 0.12.12",
  "tokio",
+]
+
+[[package]]
+name = "gst-videoconverter"
+version = "0.14.0-alpha.1"
+dependencies = [
+ "gstreamer",
+ "gstreamer-base",
+ "gstreamer-video",
+ "yuv",
 ]
 
 [[package]]
@@ -9171,6 +9194,16 @@ dependencies = [
  "quote",
  "syn 2.0.108",
  "synstructure",
+]
+
+[[package]]
+name = "yuv"
+version = "0.8.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30078f3e5790a2127f89c57c4ccb46d060205bf2c4c267f77cd08fb5c02c6d79"
+dependencies = [
+ "num-traits",
+ "rayon",
 ]
 
 [[package]]
