@@ -3418,6 +3418,7 @@ dependencies = [
  "gstreamer-validate",
  "gstreamer-video",
  "image",
+ "image-compare",
  "rqrr",
 ]
 
@@ -4733,6 +4734,19 @@ dependencies = [
  "bytemuck",
  "byteorder-lite",
  "num-traits",
+ "png",
+]
+
+[[package]]
+name = "image-compare"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6bf712e96694f43e33b8394265e4d4bc06998c3648718148e4584d80dc3b3165"
+dependencies = [
+ "image",
+ "itertools 0.14.0",
+ "rayon",
+ "thiserror 2.0.12",
 ]
 
 [[package]]
