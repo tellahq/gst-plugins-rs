@@ -1,0 +1,47 @@
+# Comprehensive test for all YUV format conversions
+# Tests all 20 supported formats using videotestsrc with SMPTE pattern
+# Reference: RGB conversion from the same videotestsrc pattern (auto-generated)
+
+meta,
+    args = {
+        "videotestsrc pattern=smpte num-buffers=1 ! video/x-raw,width=320,height=240 ! tee name=t \
+         t. ! queue ! videoconvert ! video/x-raw,format=RGB ! tee name=rgb_tee \
+             rgb_tee. ! queue ! fakesink name=rgb enable-last-sample=true \
+             rgb_tee. ! queue ! pngenc ! filesink location=\"$(tmpdir)/yuv_test_reference_smpte.png\" \
+         t. ! queue ! videoconvert ! video/x-raw,format=I420 ! fakesink name=i420 enable-last-sample=true \
+         t. ! queue ! videoconvert ! video/x-raw,format=NV12 ! fakesink name=nv12 enable-last-sample=true \
+         t. ! queue ! videoconvert ! video/x-raw,format=NV21 ! fakesink name=nv21 enable-last-sample=true \
+         t. ! queue ! videoconvert ! video/x-raw,format=YV12 ! fakesink name=yv12 enable-last-sample=true \
+         t. ! queue ! videoconvert ! video/x-raw,format=Y42B ! fakesink name=y42b enable-last-sample=true \
+         t. ! queue ! videoconvert ! video/x-raw,format=Y444 ! fakesink name=y444 enable-last-sample=true \
+         t. ! queue ! videoconvert ! video/x-raw,format=YUY2 ! fakesink name=yuy2 enable-last-sample=true \
+         t. ! queue ! videoconvert ! video/x-raw,format=UYVY ! fakesink name=uyvy enable-last-sample=true \
+         t. ! queue ! videoconvert ! video/x-raw,format=VYUY ! fakesink name=vyuy enable-last-sample=true \
+         t. ! queue ! videoconvert ! video/x-raw,format=YVYU ! fakesink name=yvyu enable-last-sample=true \
+         t. ! queue ! videoconvert ! video/x-raw,format=NV16 ! fakesink name=nv16 enable-last-sample=true \
+         t. ! queue ! videoconvert ! video/x-raw,format=NV61 ! fakesink name=nv61 enable-last-sample=true \
+         t. ! queue ! videoconvert ! video/x-raw,format=NV24 ! fakesink name=nv24 enable-last-sample=true \
+         t. ! queue ! videoconvert ! video/x-raw,format=GRAY8 ! fakesink name=gray8 enable-last-sample=true \
+         t. ! queue ! videoconvert ! video/x-raw,format=P010_10LE ! fakesink name=p010 enable-last-sample=true \
+         t. ! queue ! videoconvert ! video/x-raw,format=I420_10LE ! fakesink name=i420_10le enable-last-sample=true \
+         t. ! queue ! videoconvert ! video/x-raw,format=I422_10LE ! fakesink name=i422_10le enable-last-sample=true",
+    },
+    handles-states=true,
+    ignore-eos=true
+
+play
+wait, message-type=eos
+
+# Test RGB baseline (should be identical, threshold=0.0)
+compare-last-frame, reference-file="$(tmpdir)/yuv_test_reference_smpte.png", sink-name=rgb, threshold=0.0, metric=rms
+
+# Test all YUV formats against the RGB reference
+foreach, format=<i420, yv12, nv12, nv21, y42b, nv16, nv61, y444, nv24, yuy2, uyvy, vyuy, yvyu, p010, i420_10le, i422_10le>,
+    actions = {
+        [compare-last-frame, reference-file="$(tmpdir)/yuv_test_reference_smpte.png", sink-name="$(format)", threshold=0.1, metric=rms],
+    }
+
+# Test grayscale with higher threshold
+compare-last-frame, reference-file="$(tmpdir)/yuv_test_reference_smpte.png", sink-name=gray8, threshold=0.2, metric=rms
+
+stop

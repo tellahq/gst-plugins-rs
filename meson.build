@@ -218,6 +218,7 @@ plugins = {
     'library': 'libgstrspng',
     'examples': ['pngenc'],
   },
+  'videoconvert': {'library': 'libgstrsvideoconvert'},
   'rav1e': {'library': 'libgstrav1e'},
   'videofx': {
     'library': 'libgstrsvideofx',
