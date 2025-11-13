@@ -286,6 +286,7 @@ impl GLBaseFilterImpl for SkiaReshapeGL {
             }
         };
 
+        gl::load_with(|name| context.proc_address(name) as *const _);
         let display = context.display();
         let our_context = gst_gl::GLContext::new(&display);
 
@@ -418,11 +419,6 @@ impl GLFilterImpl for SkiaReshapeGL {
                         .expect("No Skia context while filtering")
                         .clone();
                     drop(skia_context_mutex);
-
-                    // Load GL functions for explicit synchronization
-                    gl::load_with(|name| {
-                        context.proc_address(name) as *const _
-                    });
 
                     // Ensure any pending GL operations are complete before Skia uses the textures
                     unsafe {
