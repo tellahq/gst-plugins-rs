@@ -1,23 +1,20 @@
 // SPDX-License-Identifier: MPL-2.0
 
+use crate::CAT;
 use gst::glib;
 use gst::prelude::*;
 use gst_video::prelude::*;
+use gst_videoconverter::VideoConverter;
 use image::GenericImageView;
-use std::sync::{LazyLock, Once};
+use std::sync::Once;
 
 static REGISTER_ACTIONS: Once = Once::new();
 
-static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
-    gst::DebugCategory::new(
-        "rsvalidate",
-        gst::DebugColorFlags::empty(),
-        Some("GStreamer Validate Rust Plugin"),
-    )
-});
-
-/// Extract an RGB/RGBA image from a GStreamer sample
-fn extract_image_from_sample(sample: &gst::Sample) -> Result<image::DynamicImage, String> {
+/// Extract an RGB/RGBA image from a GStreamer sample, converting from YUV if needed
+fn extract_image_from_sample(
+    sample: &gst::Sample,
+    wanted_color: image::ColorType,
+) -> Result<image::DynamicImage, String> {
     let buffer_ref = sample.buffer().ok_or("Sample has no buffer")?;
     let caps = sample.caps().ok_or("Sample has no caps")?;
 
@@ -34,7 +31,7 @@ fn extract_image_from_sample(sample: &gst::Sample) -> Result<image::DynamicImage
 
     // Convert to image::DynamicImage based on format
     match format {
-        gst_video::VideoFormat::Rgb => {
+        gst_video::VideoFormat::Rgb if wanted_color == image::ColorType::Rgb8 => {
             let data = frame
                 .plane_data(0)
                 .map_err(|_| "Failed to get plane data")?;
@@ -58,7 +55,7 @@ fn extract_image_from_sample(sample: &gst::Sample) -> Result<image::DynamicImage
                 Ok(image::DynamicImage::ImageRgb8(img))
             }
         }
-        gst_video::VideoFormat::Rgba => {
+        gst_video::VideoFormat::Rgba if wanted_color == image::ColorType::Rgba8 => {
             let data = frame
                 .plane_data(0)
                 .map_err(|_| "Failed to get plane data")?;
@@ -81,15 +78,80 @@ fn extract_image_from_sample(sample: &gst::Sample) -> Result<image::DynamicImage
                 Ok(image::DynamicImage::ImageRgba8(img))
             }
         }
-        _ => Err(format!(
-            "Unsupported video format: {:?}. Please convert to RGB or RGBA in the pipeline.",
-            format
-        )),
+        _ => {
+            gst::debug!(CAT, "Converting {:?} to RGB using VideoConverter", format);
+
+            let start_conversion = std::time::Instant::now();
+
+            // Create output VideoInfo for RGB
+            let out_info = gst_video::VideoInfo::builder(
+                if wanted_color == image::ColorType::Rgb8 {
+                    gst_video::VideoFormat::Rgb
+                } else {
+                    gst_video::VideoFormat::Rgba
+                },
+                width,
+                height,
+            )
+            .build()
+            .map_err(|_| "Failed to build output VideoInfo")?;
+
+            // Create converter
+            let converter = VideoConverter::new(
+                &video_info,
+                &out_info,
+                Some(
+                    gst::Structure::builder("GstVideoConverter")
+                        .field("disable-fallback", true)
+                        .build()
+                        .try_into()
+                        .unwrap(),
+                ),
+            )
+            .map_err(|e| format!("Failed to create VideoConverter: {}", e))?;
+
+            // Allocate output buffer using from_mut_slice
+            let out_vec = vec![0u8; out_info.size()];
+            let out_buffer = gst::Buffer::from_mut_slice(out_vec);
+            let mut out_frame = gst_video::VideoFrame::from_buffer_writable(out_buffer, &out_info)
+                .map_err(|_| "Failed to map output buffer as writable VideoFrame")?;
+
+            {
+                let mut out_frame_ref = out_frame.as_mut_video_frame_ref();
+                converter
+                    .frame_ref(&frame, &mut out_frame_ref)
+                    .map_err(|e| format!("Frame conversion failed: {}", e))?;
+            }
+
+            gst::error!(
+                CAT,
+                "{:?} to RGB conversion took {:?}",
+                format,
+                start_conversion.elapsed()
+            );
+
+            // Extract data using try_into_inner
+            let out_buffer = out_frame.into_buffer();
+            let out_vec = out_buffer
+                .try_into_inner::<Vec<u8>>()
+                .map_err(|_| "Failed to get buffer data")?;
+
+            if wanted_color == image::ColorType::Rgb8 {
+                let img = image::RgbImage::from_raw(width, height, out_vec)
+                    .ok_or("Failed to create RGB image")?;
+                Ok(image::DynamicImage::ImageRgb8(img))
+            } else {
+                let img = image::RgbaImage::from_raw(width, height, out_vec)
+                    .ok_or("Failed to create RGBA image")?;
+                Ok(image::DynamicImage::ImageRgba8(img))
+            }
+        }
     }
 }
 
 /// Compare two images and optionally save a diff heatmap
 fn compare_images(
+    structure: &gst::StructureRef,
     reference: &image::DynamicImage,
     actual: &image::DynamicImage,
     metric: &str,
@@ -144,12 +206,20 @@ fn compare_images(
         }
         _ => {
             return Err(
-                "Image format mismatch: both images must be RGB or both must be RGBA".to_string(),
+                format!("Image format mismatch: both images must be RGB or both must be RGBA, ref: {:?}, actual: {:?}",
+                    reference.color(),
+                    actual.color())
             )
         }
     };
 
     let score = result.score;
+    gst::error!(
+        CAT,
+        "Image comparison score using metric '{}': {:.6}",
+        metric,
+        score
+    );
 
     // Save diff heatmap if requested
     if let Some(output_path) = diff_output {
@@ -157,8 +227,25 @@ fn compare_images(
         diff_image
             .save(output_path)
             .map_err(|e| format!("Failed to save diff heatmap to '{}': {}", output_path, e))?;
+
+        let reference = structure
+            .get::<String>("reference-file")
+            .expect("tested earlier");
+
+        // Strip extension from reference filename for clearer naming
+        let reference_stem = std::path::Path::new(&reference)
+            .file_stem()
+            .and_then(|n| n.to_str())
+            .ok_or("Failed to get reference image filename")?;
+
+        // Save actual frame (converted internally if needed from YUV/etc to RGB)
+        let actual_output_path = std::path::Path::new(output_path)
+            .parent()
+            .ok_or("Failed to get output directory")?
+            .join(format!("{reference_stem}.converted.png"));
+
         actual
-            .save(format!("{}_actual.png", output_path))
+            .save(&actual_output_path)
             .map_err(|e| format!("Failed to save actual image: {}", e))?;
         gst::info!(CAT, "Saved diff heatmap to '{}'", output_path);
     }
@@ -225,11 +312,12 @@ fn compare_last_frame(
     })?;
 
     // Extract actual frame from sample
-    let actual_image =
-        extract_image_from_sample(&sample).map_err(gst_validate::ActionError::Error)?;
+    let actual_image = extract_image_from_sample(&sample, reference_image.color())
+        .map_err(gst_validate::ActionError::Error)?;
 
     // Compare images
     let score = compare_images(
+        structure,
         &reference_image,
         &actual_image,
         &metric,
@@ -245,7 +333,7 @@ fn compare_last_frame(
 
     if difference > threshold {
         return Err(gst_validate::ActionError::Error(format!(
-            "Frame comparison failed: difference {:.6} exceeds threshold {:.6} (metric: {}, reference: {})",
+            "Frame comparison failed: difference {:.6} exceeds threshold {:.6} (metric: {} (raw score: {score}), reference: {})",
             difference, threshold, metric, reference_file
         )));
     }
@@ -262,13 +350,13 @@ fn compare_last_frame(
     Ok(gst_validate::ActionSuccess::Ok)
 }
 
-pub fn register_validate_actions(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
+pub fn register_validate_actions(namespace: &str) -> Result<(), glib::BoolError> {
     REGISTER_ACTIONS.call_once(|| {
         gst_validate::ActionTypeBuilder::new(
             "compare-last-frame",
             |scenario, action| compare_last_frame(scenario, action)
         )
-        .implementer_namespace(plugin.name().as_str())
+        .implementer_namespace(namespace)
         .parameter(
             gst_validate::ActionParameterBuilder::new(
                 "sink-name",
@@ -330,7 +418,8 @@ pub fn register_validate_actions(plugin: &gst::Plugin) -> Result<(), glib::BoolE
         )
         .description(
             "Compares the last frame from a sink against a reference PNG image. \
-             The frame must be in RGB or RGBA format. \
+             Supports RGB, RGBA, and YUV formats (I420, NV12, NV21, YUY2, YV12, UYVY, Y42B, Y444, YVYU, GRAY8). \
+             YUV formats are converted to RGB using the yuv crate (independent of VideoConverter). \
              Returns the difference score and optionally generates a visual diff heatmap."
         )
         .flags(gst_validate::ActionTypeFlags::CHECK)

@@ -1,33 +1,28 @@
 #![allow(clippy::non_send_fields_in_send_ty, unused_doc_comments)]
 
+use std::sync::LazyLock;
+
 use gst::glib;
 
-mod utils;
 mod check_last_frame_qrcode;
 mod compare_last_frame;
+mod utils;
 
-fn plugin_init(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
-    if let Err(err) = check_last_frame_qrcode::register_validate_actions(plugin) {
-        gst::warning!(
-            gst::CAT_RUST,
-            "Failed to register validate actions: {}",
-            err
-        );
+pub(crate) static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
+    gst::DebugCategory::new(
+        "rsvalidate",
+        gst::DebugColorFlags::empty(),
+        Some("GStreamer Validate Rust Plugin"),
+    )
+});
 
-        return Err(err);
-    }
+fn register_actions() -> Result<(), glib::BoolError> {
+    check_last_frame_qrcode::register_validate_actions("rsvalidate")?;
+    compare_last_frame::register_validate_actions("rsvalidate")
+}
 
-    if let Err(err) = compare_last_frame::register_validate_actions(plugin) {
-        gst::warning!(
-            gst::CAT_RUST,
-            "Failed to register validate actions: {}",
-            err
-        );
-
-        return Err(err);
-    }
-
-    Ok(())
+fn plugin_init(_plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
+    register_actions()
 }
 
 gst::plugin_define!(
@@ -41,3 +36,25 @@ gst::plugin_define!(
     env!("CARGO_PKG_REPOSITORY"),
     env!("BUILD_REL_DATE")
 );
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn init() {
+        use std::sync::Once;
+        static INIT: Once = Once::new();
+
+        INIT.call_once(|| {
+            gst::init().unwrap();
+            gst_validate::init();
+        });
+    }
+
+    #[test]
+    fn test_plugin_functions_exist() {
+        init();
+
+        register_actions().expect("Failed to register actions");
+    }
+}

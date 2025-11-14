@@ -119,13 +119,13 @@ fn check_last_frame_qrcode(
     Ok(gst_validate::ActionSuccess::Ok)
 }
 
-pub fn register_validate_actions(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
+pub fn register_validate_actions(namespace: &str) -> Result<(), glib::BoolError> {
     REGISTER_ACTIONS.call_once(|| {
         gst_validate::ActionTypeBuilder::new(
             "check-last-frame-qrcode",
             |scenario, action| check_last_frame_qrcode(scenario, action)
         )
-        .implementer_namespace(plugin.name().as_str())
+        .implementer_namespace(namespace)
         .parameter(
             gst_validate::ActionParameterBuilder::new(
                 "sink-name",
