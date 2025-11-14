@@ -417,17 +417,6 @@ impl GLFilterImpl for SkiaReshapeGL {
                         .as_ref()
                         .expect("No Skia context while filtering")
                         .clone();
-                    drop(skia_context_mutex);
-
-                    // Load GL functions for explicit synchronization
-                    gl::load_with(|name| {
-                        context.proc_address(name) as *const _
-                    });
-
-                    // Ensure any pending GL operations are complete before Skia uses the textures
-                    unsafe {
-                        gl::Finish();
-                    }
 
                     // Call render_with_skia in the dedicated context
                     let render_result = this.render_with_skia(
@@ -442,10 +431,6 @@ impl GLFilterImpl for SkiaReshapeGL {
 
                     match render_result {
                         Ok(_) => {
-                            // Force GL to complete all operations before continuing
-                            unsafe {
-                                gl::Finish();
-                            }
                             gst::debug!(
                                 CAT,
                                 "Skia rendering completed successfully in dedicated context"
