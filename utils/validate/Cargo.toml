@@ -13,7 +13,6 @@ gst.workspace = true
 gst-base.workspace = true
 gst-video.workspace = true
 gst-validate.workspace = true
-gst-videoconverter = { path = "../../video/videoconvert/videoconverter" }
 rqrr = { version = "0.7", default-features = false, features = ["img"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 image-compare = "0.4"

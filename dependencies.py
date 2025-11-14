@@ -38,7 +38,6 @@ RENAMES = {
     'rswebrtc': 'webrtc',
     'rspng': 'png',
     'rsvideofx': 'videofx',
-    'rsvideoconvert': 'videoconvert',
     'rsinter': 'inter',
     'textahead': 'ahead',
     'textwrap': 'wrap',
