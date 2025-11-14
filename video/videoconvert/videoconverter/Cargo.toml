@@ -12,4 +12,4 @@ description = "GStreamer Rust Video Format Converter Library"
 gst.workspace = true
 gst-base.workspace = true
 gst-video.workspace = true
-yuv = {version = "0.8", features = ["rayon"]}
+yuv = { git = "https://github.com/awxkee/yuvutils-rs.git", branch = "master", features = ["rayon"] }
