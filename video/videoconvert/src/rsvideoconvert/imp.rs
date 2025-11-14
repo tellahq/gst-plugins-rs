@@ -5,6 +5,7 @@ use gst::prelude::*;
 use gst::subclass::prelude::*;
 use gst_base::prelude::*;
 use gst_base::subclass::prelude::*;
+use gst_video::prelude::*;
 use gst_video::subclass::prelude::*;
 
 use std::sync::{LazyLock, Mutex};
@@ -102,6 +103,7 @@ impl BaseTransformImpl for RsVideoConvert {
         gst_base::subclass::BaseTransformMode::NeverInPlace;
     const PASSTHROUGH_ON_SAME_CAPS: bool = false;
     const TRANSFORM_IP_ON_PASSTHROUGH: bool = false;
+
 
     fn transform_caps(
         &self,
@@ -465,21 +467,13 @@ impl RsVideoConvert {
 impl VideoFilterImpl for RsVideoConvert {
     fn set_info(
         &self,
-        _incaps: &gst::Caps,
+        incaps: &gst::Caps,
         in_info: &gst_video::VideoInfo,
-        _outcaps: &gst::Caps,
+        outcaps: &gst::Caps,
         out_info: &gst_video::VideoInfo,
     ) -> Result<(), gst::LoggableError> {
         let in_format = in_info.format();
         let out_format = out_info.format();
-
-        gst::debug!(
-            CAT,
-            imp = self,
-            "Configuring conversion from {} to {}",
-            in_format,
-            out_format
-        );
 
         // Get a reference to the element as BaseTransform to set passthrough
         let element = self.obj();
@@ -539,6 +533,20 @@ impl VideoFilterImpl for RsVideoConvert {
             );
             gst::FlowError::NotNegotiated
         })?;
+
+        // Check if input frame dimensions match output dimensions
+        let in_info = in_frame.info();
+        let out_info = out_frame.info();
+
+        if in_info.width() != out_info.width() || in_info.height() != out_info.height() {
+            gst::element_imp_error!(
+                self,
+                gst::StreamError::Failed,
+                ["Input dimensions ({}x{}) don't match output dimensions ({}x{}). Cannot convert without scaling/cropping.",
+                 in_info.width(), in_info.height(), out_info.width(), out_info.height()]
+            );
+            return Err(gst::FlowError::Error);
+        }
 
         converter.frame_ref(in_frame, out_frame).map_err(|e| {
             gst::element_imp_error!(self, gst::StreamError::Failed, ["Conversion failed: {}", e]);
