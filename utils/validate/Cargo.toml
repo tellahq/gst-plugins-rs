@@ -14,7 +14,8 @@ gst-base.workspace = true
 gst-video.workspace = true
 gst-validate.workspace = true
 rqrr = { version = "0.7", default-features = false, features = ["img"] }
-image = { version = "0.25", default-features = false }
+image = { version = "0.25", default-features = false, features = ["png"] }
+image-compare = "0.4"
 
 [lib]
 name = "gstrsvalidate"
