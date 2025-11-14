@@ -122,6 +122,18 @@ impl BaseTransformImpl for RsVideoConvert {
                     let mut s_out = s.to_owned();
                     s_out.set("format", format.to_str());
 
+                    // When negotiating input requirements (Src direction means "what do you need on sink?"),
+                    // allow flexible dimensions to handle H.264 macroblock padding
+                    if direction == gst::PadDirection::Src {
+                        if let Ok(width) = s.get::<i32>("width") {
+                            if let Ok(height) = s.get::<i32>("height") {
+                                // Allow input dimensions to be up to 32 pixels larger (H.264 macroblock padding)
+                                s_out.set("width", gst::IntRange::new(width, width + 32));
+                                s_out.set("height", gst::IntRange::new(height, height + 32));
+                            }
+                        }
+                    }
+
                     // Remove YUV-specific fields when converting to RGB formats
                     let out_format = gst_video::VideoFormat::from_string(format.to_str());
                     if let Ok(out_info) = gst_video::VideoInfo::builder(out_format, 1, 1).build() {
