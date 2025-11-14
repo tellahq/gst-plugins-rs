@@ -120,6 +120,18 @@ impl BaseTransformImpl for RsVideoConvert {
                 for format in gst_video::VideoFormat::iter_raw() {
                     let mut s_out = s.to_owned();
                     s_out.set("format", format.to_str());
+
+                    // Remove YUV-specific fields when converting to RGB formats
+                    let out_format = gst_video::VideoFormat::from_string(format.to_str());
+                    if let Ok(out_info) = gst_video::VideoInfo::builder(out_format, 1, 1).build() {
+                        if out_info.is_rgb() {
+                            // RGB formats don't have chroma subsampling or YUV colorimetry
+                            s_out.remove_field("chroma-site");
+                            // Colorimetry will be re-added during fixate_caps if appropriate
+                            s_out.remove_field("colorimetry");
+                        }
+                    }
+
                     other_caps_mut.append_structure(s_out);
                 }
             }
