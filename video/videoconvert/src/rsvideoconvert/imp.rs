@@ -189,21 +189,17 @@ impl BaseTransformImpl for RsVideoConvert {
             // Fixate height to input height
             s.fixate_field_nearest_int("height", in_info.height() as i32);
 
-            // Fixate framerate to input framerate if present
-            if s.has_field_with_type("framerate", gst::Fraction::static_type()) {
-                s.fixate_field_nearest_fraction(
-                    "framerate",
-                    gst::Fraction::new(in_info.fps().numer() as i32, in_info.fps().denom() as i32),
-                );
-            }
+            // Fixate framerate to input framerate
+            s.fixate_field_nearest_fraction(
+                "framerate",
+                gst::Fraction::new(in_info.fps().numer() as i32, in_info.fps().denom() as i32),
+            );
 
-            // Fixate pixel-aspect-ratio to input PAR if present
-            if s.has_field_with_type("pixel-aspect-ratio", gst::Fraction::static_type()) {
-                s.fixate_field_nearest_fraction(
-                    "pixel-aspect-ratio",
-                    gst::Fraction::new(in_info.par().numer() as i32, in_info.par().denom() as i32),
-                );
-            }
+            // Fixate pixel-aspect-ratio to input PAR
+            s.fixate_field_nearest_fraction(
+                "pixel-aspect-ratio",
+                gst::Fraction::new(in_info.par().numer() as i32, in_info.par().denom() as i32),
+            );
         }
 
         // Now handle format fixation - find the best format match
