@@ -104,7 +104,6 @@ impl BaseTransformImpl for RsVideoConvert {
     const PASSTHROUGH_ON_SAME_CAPS: bool = false;
     const TRANSFORM_IP_ON_PASSTHROUGH: bool = false;
 
-
     fn transform_caps(
         &self,
         direction: gst::PadDirection,
@@ -539,13 +538,18 @@ impl VideoFilterImpl for RsVideoConvert {
         let out_info = out_frame.info();
 
         if in_info.width() != out_info.width() || in_info.height() != out_info.height() {
-            gst::element_imp_error!(
+            gst::element_imp_warning!(
                 self,
-                gst::StreamError::Failed,
-                ["Input dimensions ({}x{}) don't match output dimensions ({}x{}). Cannot convert without scaling/cropping.",
-                 in_info.width(), in_info.height(), out_info.width(), out_info.height()]
+                gst::CoreError::Negotiation,
+                [
+                    "Geometry mismatch: in={}x{}, out={}x{}. Requesting renegotiation.",
+                    in_info.width(),
+                    in_info.height(),
+                    out_info.width(),
+                    out_info.height()
+                ]
             );
-            return Err(gst::FlowError::Error);
+            return Err(gst::FlowError::NotNegotiated);
         }
 
         converter.frame_ref(in_frame, out_frame).map_err(|e| {
