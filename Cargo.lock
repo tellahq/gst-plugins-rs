@@ -9199,8 +9199,7 @@ dependencies = [
 [[package]]
 name = "yuv"
 version = "0.8.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30078f3e5790a2127f89c57c4ccb46d060205bf2c4c267f77cd08fb5c02c6d79"
+source = "git+https://github.com/awxkee/yuvutils-rs.git?branch=master#009f6a42025ef4aac17907b4dcaba329ab466c3c"
 dependencies = [
  "num-traits",
  "rayon",
