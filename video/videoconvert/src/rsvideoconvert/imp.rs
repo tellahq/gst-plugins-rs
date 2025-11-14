@@ -533,25 +533,6 @@ impl VideoFilterImpl for RsVideoConvert {
             gst::FlowError::NotNegotiated
         })?;
 
-        // Check if input frame dimensions match output dimensions
-        let in_info = in_frame.info();
-        let out_info = out_frame.info();
-
-        if in_info.width() != out_info.width() || in_info.height() != out_info.height() {
-            gst::element_imp_warning!(
-                self,
-                gst::CoreError::Negotiation,
-                [
-                    "Geometry mismatch: in={}x{}, out={}x{}. Requesting renegotiation.",
-                    in_info.width(),
-                    in_info.height(),
-                    out_info.width(),
-                    out_info.height()
-                ]
-            );
-            return Err(gst::FlowError::NotNegotiated);
-        }
-
         converter.frame_ref(in_frame, out_frame).map_err(|e| {
             gst::element_imp_error!(self, gst::StreamError::Failed, ["Conversion failed: {}", e]);
             gst::FlowError::Error

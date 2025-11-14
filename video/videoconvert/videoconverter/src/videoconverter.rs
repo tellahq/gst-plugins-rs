@@ -1606,9 +1606,9 @@ impl YuvConverter {
         let in_info = src.info();
         let out_info = dest.info();
 
-        // Get dimensions from frame info
-        let width = in_info.width();
-        let height = in_info.height();
+        // Use output dimensions (visible area) - strides from input handle padding
+        let width = out_info.width();
+        let height = out_info.height();
 
         // Detect conversion direction
         let direction = detect_conversion_direction(&in_info, &out_info);
