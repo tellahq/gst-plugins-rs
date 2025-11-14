@@ -227,9 +227,7 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
         let cropped_image =
             if let Some(ref src_with_cropping_applied) = rects.src_with_cropping_applied {
                 let subset_result = image.make_subset(
-                    direct
-                        .as_deref_mut()
-                        .map(|ctx| ctx.as_recorder() as &mut dyn skia::Recorder),
+                    direct.as_deref_mut().map(|ctx| ctx.as_recorder() as &mut dyn skia::Recorder),
                     src_with_cropping_applied.round(),
                     Default::default(),
                 );
