@@ -4,9 +4,10 @@
 # Meson will lookup those dependencies using pkg-config to be able to link
 # static Rust plugins into gst-full.
 
-import sys
 from argparse import ArgumentParser
 from pathlib import Path
+import sys
+
 
 try:
     # Python11 stdlib
@@ -43,16 +44,11 @@ RENAMES = {
 }
 
 class CargoAnalyzer:
-    def __init__(self, src_dir=None):
-        self.src_dir = src_dir
+    def __init__(self):
+        self.src_dir = None
         self.plugins = None
         self.features = False
         self.gst_version = "1.18"
-        self.crates = None
-
-    def load_crates(self):
-        with (self.src_dir / "Cargo.toml").open("rb") as f:
-            self.crates = tomllib.load(f)["workspace"]["members"]
 
     def extract_version(self, feature_name):
         if feature_name.startswith('v'):
@@ -91,36 +87,6 @@ class CargoAnalyzer:
 
         print(f'Enabling features: {wanted_features!r}', file=sys.stderr)
         return wanted_features
-
-    def get_library_names(self, packages):
-        """
-        Convert package names to library names by parsing Cargo.toml files.
-        Returns a set of library name variants (with and without 'lib' prefix)
-        for filtering libraries and pkg-config files.
-        """
-        lib_names = set()
-
-        for package in packages:
-            # Find the crate by matching the package name directly
-            for crate in self.crates:
-                crate_path = self.src_dir / crate / 'Cargo.toml'
-                if not crate_path.exists():
-                    continue
-
-                # Parse the Cargo.toml to check package name
-                with crate_path.open('rb') as f:
-                    data = tomllib.load(f)
-
-                # Match against the actual package name in Cargo.toml
-                if data.get('package', {}).get('name') == package:
-                    if 'lib' in data and 'name' in data['lib']:
-                        lib_name = data['lib']['name']
-                        # Add library name variants for filtering
-                        lib_names.add(f'lib{lib_name}')  # e.g., libgstrsvalidate
-                        lib_names.add(lib_name)          # e.g., gstrsvalidate (for .pc files)
-                    break
-
-        return lib_names
 
     def run(self):
         with (opts.src_dir / 'Cargo.toml').open('rb') as f:
