@@ -238,6 +238,7 @@ plugins = {
   },
   'validate': {
     'library': 'libgstrsvalidate',
+    'validate': true
     }, # Only used to handle the validate feature option
   'speechmatics': {'library': 'libgstspeechmatics'},
   'vvdec': {
@@ -454,6 +455,10 @@ pkgconfig_install_dir = get_option('libdir') / 'pkgconfig'
 auto_plugin_features = get_option('auto_plugin_features')
 
 foreach plugin_name, details: plugins
+  if details.get('validate', false)
+    continue
+  endif
+
   plugin_opt = get_variable(f'@plugin_name@_option', get_option(plugin_name))
   if plugin_opt.auto()
     plugin_opt = auto_plugin_features
