@@ -150,7 +150,7 @@ impl BaseTransformImpl for RsVideoConvert {
             }
         }
 
-        gst::debug!(
+        gst::log!(
             CAT,
             imp = self,
             "Transformed caps from {} to {} in direction {:?}",
