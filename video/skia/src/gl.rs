@@ -33,7 +33,7 @@ pub fn create_backend_texture_from_gl(
     Ok(unsafe {
         skia::gpu::backend_textures::make_gl(
             (width, height),
-            skia::gpu::Mipmapped::Yes,
+            skia::gpu::Mipmapped::No,
             skia::gpu::gl::TextureInfo {
                 target: TEXTURE_2D,
                 id: texture_id,
