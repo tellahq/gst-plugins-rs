@@ -544,7 +544,10 @@ fn select_planar_fn(subsampling: YuvSubsampling, bit_depth: u32) -> Option<Conve
             subsampling,
             YuvSubsampling::S420 | YuvSubsampling::S422 | YuvSubsampling::S444
         ),
-        10 => matches!(subsampling, YuvSubsampling::S420 | YuvSubsampling::S422),
+        10 => matches!(
+            subsampling,
+            YuvSubsampling::S420 | YuvSubsampling::S422 | YuvSubsampling::S444
+        ),
         _ => false,
     };
 
@@ -833,6 +836,7 @@ fn convert_planar_yuv_to_rgb<T>(
             (YuvSubsampling::S422, RgbFormat::Rgba) => yuv::i210_to_rgba,
             (YuvSubsampling::S422, RgbFormat::Bgr) => yuv::i210_to_bgr,
             (YuvSubsampling::S422, RgbFormat::Bgra) => yuv::i210_to_bgra,
+            (YuvSubsampling::S444, RgbFormat::Rgba) => yuv::i410_to_rgba,
             _ => {
                 return Err(format!(
                     "Unsupported 10-bit planar format: {:?} {:?}",
@@ -1546,11 +1550,26 @@ impl YuvConverter {
 
         // YUV/Gray → RGB: 8-bit and 10-bit input, 8-bit output
         // Also verify output RGB format is supported by yuv crate
+        // For 10-bit S444, only RGBA output is supported by the yuv crate
         let yuv_to_rgb = in_is_yuv_or_gray
             && out_is_rgb
             && (in_bit_depth == 8 || in_bit_depth == 10)
             && out_bit_depth == 8
-            && out_rgb_supported;
+            && out_rgb_supported
+            && {
+                // Additional check for 10-bit S444: only RGBA is supported
+                if in_bit_depth == 10 && !in_info.is_gray() {
+                    let subsampling = detect_yuv_subsampling(in_info);
+                    if subsampling == YuvSubsampling::S444 {
+                        // yuv crate only has i410_to_rgba, not i410_to_rgb/bgr/bgra
+                        detect_rgb_format(out_info) == RgbFormat::Rgba
+                    } else {
+                        true
+                    }
+                } else {
+                    true
+                }
+            };
 
         // RGB → YUV/Gray: 8-bit only (for now)
         // Also verify input RGB format is supported by yuv crate
