@@ -455,16 +455,18 @@ fn detect_yuv_subsampling(info: &gst_video::VideoInfo) -> YuvSubsampling {
     let luma_height = info.comp_height(0);
     let chroma_height = info.comp_height(1);
 
-    // Calculate subsampling ratios
-    let width_ratio = luma_width / chroma_width.max(1);
-    let height_ratio = luma_height / chroma_height.max(1);
+    // Determine if there's horizontal subsampling (chroma_width ≈ luma_width / 2)
+    // For odd luma dimensions, chroma = ceil(luma/2), so chroma * 2 >= luma
+    // We check if chroma is roughly half of luma by seeing if 2 * chroma >= luma
+    let h_subsampled = chroma_width > 0 && chroma_width * 2 >= luma_width && chroma_width < luma_width;
+    let v_subsampled = chroma_height > 0 && chroma_height * 2 >= luma_height && chroma_height < luma_height;
 
-    match (width_ratio, height_ratio) {
-        (1, 1) => YuvSubsampling::S444, // 4:4:4 - no subsampling
-        (2, 1) => YuvSubsampling::S422, // 4:2:2 - horizontal subsampling
-        (2, 2) => YuvSubsampling::S420, // 4:2:0 - both directions
-        _ => unreachable!(
-            "Unsupported subsampling: {}x{} / {}x{}",
+    match (h_subsampled, v_subsampled) {
+        (false, false) => YuvSubsampling::S444, // 4:4:4 - no subsampling
+        (true, false) => YuvSubsampling::S422,  // 4:2:2 - horizontal subsampling only
+        (true, true) => YuvSubsampling::S420,   // 4:2:0 - both directions
+        (false, true) => unreachable!(
+            "Unsupported subsampling (vertical only): {}x{} / {}x{}",
             luma_width, luma_height, chroma_width, chroma_height
         ),
     }
