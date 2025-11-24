@@ -53,12 +53,76 @@ enum RgbFormat {
     Bgra, // 4 components, BGRA order
 }
 
-/// Conversion direction between format families
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ConversionDirection {
-    YuvToRgb, // YUV/Gray → RGB/RGBA/BGR/BGRA
-    RgbToYuv, // RGB/RGBA/BGR/BGRA → YUV/Gray
-    RgbToRgb, // RGB↔RGBA, RGB↔BGR, RGBA↔BGRA, etc.
+/// Validated YUV→RGB conversion params with all parameters needed for dispatch
+#[derive(Debug, Clone, Copy)]
+enum YuvToRgbParams {
+    SemiPlanar {
+        subsampling: YuvSubsampling,
+        uv_order: UvOrder,
+        rgb_format: RgbFormat,
+        bit_depth: u32,
+        range: YuvRange,
+        matrix: YuvStandardMatrix,
+    },
+    Planar {
+        subsampling: YuvSubsampling,
+        plane_order: (usize, usize, usize),
+        rgb_format: RgbFormat,
+        bit_depth: u32,
+        range: YuvRange,
+        matrix: YuvStandardMatrix,
+    },
+    Packed {
+        packed_order: PackedOrder,
+        range: YuvRange,
+        matrix: YuvStandardMatrix,
+        // Note: packed YUV always outputs RGB only, not RGBA/BGR/BGRA
+    },
+    Grayscale {
+        rgb_format: RgbFormat,
+        range: YuvRange,
+        matrix: YuvStandardMatrix,
+    },
+}
+
+/// Validated RGB→YUV conversion params with all parameters needed for dispatch
+/// Note: No Packed variant - RGB→packed YUV is NOT supported by yuv crate
+#[derive(Debug, Clone, Copy)]
+enum RgbToYuvParams {
+    SemiPlanar {
+        rgb_format: RgbFormat,
+        subsampling: YuvSubsampling,
+        uv_order: UvOrder,
+        range: YuvRange,
+        matrix: YuvStandardMatrix,
+    },
+    Planar {
+        rgb_format: RgbFormat,
+        subsampling: YuvSubsampling,
+        plane_order: (usize, usize, usize),
+        range: YuvRange,
+        matrix: YuvStandardMatrix,
+    },
+    Grayscale {
+        rgb_format: RgbFormat,
+        range: YuvRange,
+        matrix: YuvStandardMatrix,
+    },
+}
+
+/// Validated RGB→RGB conversion params
+#[derive(Debug, Clone, Copy)]
+struct RgbToRgbParams {
+    src_format: RgbFormat,
+    dst_format: RgbFormat,
+}
+
+/// All supported conversion types - stored in YuvConverter at construction time
+#[derive(Debug, Clone, Copy)]
+enum ConversionParams {
+    YuvToRgb(YuvToRgbParams),
+    RgbToYuv(RgbToYuvParams),
+    RgbToRgb(RgbToRgbParams),
 }
 
 /// Video format converter with API similar to gst_video::VideoConverter
@@ -69,33 +133,20 @@ enum ConversionDirection {
 ///
 /// API matches gst_video::VideoConverter - caller must allocate output buffer.
 pub struct VideoConverter {
-    in_info: gst_video::VideoInfo,
-    out_info: gst_video::VideoInfo,
-    strategy: ConversionStrategy,
+    inner: Inner,
 }
 
 #[derive(Debug)]
-enum ConversionStrategy {
+enum Inner {
     /// Use yuv crate for fast YUV conversions
     Yuv(YuvConverter),
     /// Use GStreamer's VideoConverter for complex conversions
-    Gst {
-        converter: gst_video::VideoConverter,
-        #[allow(dead_code)] // used for debugging
-        in_format: gst_video::VideoFormat,
-        #[allow(dead_code)]
-        out_format: gst_video::VideoFormat,
-    },
+    Gst(gst_video::VideoConverter),
 }
 
 #[derive(Debug)]
 struct YuvConverter {
-    range: YuvRange,
-    matrix: YuvStandardMatrix,
-    #[allow(dead_code)] // used for debugging
-    in_format: gst_video::VideoFormat,
-    #[allow(dead_code)]
-    out_format: gst_video::VideoFormat,
+    params: ConversionParams,
 }
 
 impl VideoConverter {
@@ -107,7 +158,6 @@ impl VideoConverter {
     ///
     /// # Returns
     /// Result with VideoConverter or error if conversion not supported
-    #[allow(dead_code)]
     pub fn new(
         in_info: &gst_video::VideoInfo,
         out_info: &gst_video::VideoInfo,
@@ -117,12 +167,8 @@ impl VideoConverter {
             return Err(glib::bool_error!("Invalid video info"));
         }
 
-        let strategy = Self::choose_strategy(in_info, out_info, config)?;
-
         Ok(Self {
-            in_info: in_info.clone(),
-            out_info: out_info.clone(),
-            strategy,
+            inner: Self::create_inner(in_info, out_info, config)?,
         })
     }
 
@@ -134,7 +180,6 @@ impl VideoConverter {
     ///
     /// # Returns
     /// Result indicating success or error message
-    #[allow(dead_code)]
     pub fn frame_ref(
         &self,
         src: &gst_video::VideoFrameRef<&gst::BufferRef>,
@@ -142,71 +187,36 @@ impl VideoConverter {
     ) -> Result<(), String> {
         let start_time = std::time::Instant::now();
 
-        let res = match &self.strategy {
-            ConversionStrategy::Gst { converter, .. } => {
+        let res = match &self.inner {
+            Inner::Gst(converter) => {
                 converter.frame_ref(src, dest);
                 Ok(())
             }
-            ConversionStrategy::Yuv(yuv_conv) => yuv_conv.convert(src, dest),
+            Inner::Yuv(yuv_conv) => yuv_conv.convert(src, dest),
         };
-        gst::info!(
+        gst::log!(
             CAT,
             "Conversion in {:?} took {:?}",
-            self.strategy,
+            self.inner,
             start_time.elapsed()
         );
 
         res
     }
 
-    /// Get input video info
-    #[allow(dead_code)]
-    pub fn in_info(&self) -> &gst_video::VideoInfo {
-        &self.in_info
-    }
-
-    /// Get output video info
-    #[allow(dead_code)]
-    pub fn out_info(&self) -> &gst_video::VideoInfo {
-        &self.out_info
-    }
-
-    fn choose_strategy(
+    fn create_inner(
         in_info: &gst_video::VideoInfo,
         out_info: &gst_video::VideoInfo,
         config: Option<gst_video::VideoConverterConfig>,
-    ) -> Result<ConversionStrategy, glib::BoolError> {
-        // Use yuv crate for supported conversions (faster than gst_video::VideoConverter)
-        if YuvConverter::supports(in_info, out_info) {
-            // Check if this is RGB→RGB conversion
-            let is_rgb_to_rgb = in_info.is_rgb() && out_info.is_rgb();
-
-            let (range, matrix) = if is_rgb_to_rgb {
-                // RGB→RGB conversions don't use YUV range/matrix
-                // Use dummy values - they won't be accessed
-                (YuvRange::Limited, YuvStandardMatrix::Bt709)
-            } else {
-                // YUV conversions: extract colorimetry from appropriate source
-                // - YUV→RGB: use input (YUV) colorimetry
-                // - RGB→YUV: use output (YUV) colorimetry
-                let colorimetry = if in_info.is_yuv() || in_info.is_gray() {
-                    in_info.colorimetry()
-                } else {
-                    out_info.colorimetry()
-                };
-
-                let range = gst_to_yuv_range(colorimetry.range());
-                let matrix = gst_to_yuv_matrix(colorimetry.matrix())
-                    .map_err(|e| glib::bool_error!("{}", e))?;
-                (range, matrix)
-            };
-
-            Ok(ConversionStrategy::Yuv(YuvConverter::new(
-                range,
-                matrix,
+    ) -> Result<Inner, glib::BoolError> {
+        if let Some(converter) = YuvConverter::try_new(in_info, out_info) {
+            gst::error!(
+                CAT,
+                "Using yuv crate for conversion from {:?} to {:?}",
                 in_info.format(),
-                out_info.format(),
-            )))
+                out_info.format()
+            );
+            Ok(Inner::Yuv(converter))
         } else {
             if config.clone().map_or(false, |config| {
                 config.get::<bool>("disable-fallback").unwrap_or(false)
@@ -217,11 +227,13 @@ impl VideoConverter {
             }
             // Fall back to GStreamer's converter
             let converter = gst_video::VideoConverter::new(in_info, out_info, config)?;
-            Ok(ConversionStrategy::Gst {
-                converter,
-                in_format: in_info.format(),
-                out_format: out_info.format(),
-            })
+            gst::fixme!(
+                CAT,
+                "Falling back to GStreamer's VideoConverter for conversion from {:?} to {:?}",
+                in_info.format(),
+                out_info.format()
+            );
+            Ok(Inner::Gst(converter))
         }
     }
 }
@@ -312,7 +324,6 @@ fn is_rgb_format_supported_by_yuv(info: &gst_video::VideoInfo) -> bool {
 }
 
 /// Introspect plane order from VideoInfo (automatically detects YV12 vs I420)
-#[allow(dead_code)]
 fn get_plane_order_introspected(info: &gst_video::VideoInfo) -> (usize, usize, usize) {
     let format_info = info.format_info();
     let plane = format_info.plane();
@@ -338,27 +349,6 @@ fn detect_rgb_format(info: &gst_video::VideoInfo) -> RgbFormat {
         (false, true) => RgbFormat::Rgba,
         (true, false) => RgbFormat::Bgr,
         (true, true) => RgbFormat::Bgra,
-    }
-}
-
-/// Detect conversion direction between format families
-fn detect_conversion_direction(
-    in_info: &gst_video::VideoInfo,
-    out_info: &gst_video::VideoInfo,
-) -> ConversionDirection {
-    let in_is_yuv_or_gray = in_info.is_yuv() || in_info.is_gray();
-    let in_is_rgb = in_info.is_rgb();
-    let out_is_yuv_or_gray = out_info.is_yuv() || out_info.is_gray();
-    let out_is_rgb = out_info.is_rgb();
-
-    match (in_is_yuv_or_gray, in_is_rgb, out_is_yuv_or_gray, out_is_rgb) {
-        (true, false, false, true) => ConversionDirection::YuvToRgb,
-        (false, true, true, false) => ConversionDirection::RgbToYuv,
-        (false, true, false, true) => ConversionDirection::RgbToRgb,
-        _ => unreachable!(
-            "Unsupported conversion direction: in_yuv={} in_rgb={} out_yuv={} out_rgb={}",
-            in_is_yuv_or_gray, in_is_rgb, out_is_yuv_or_gray, out_is_rgb
-        ),
     }
 }
 
@@ -415,15 +405,6 @@ type PlanarConversionFn10bit = fn(
     matrix: YuvStandardMatrix,
 ) -> Result<(), yuv::YuvError>;
 
-/// Enum to indicate the YUV layout type for conversion
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ConversionFnVariant {
-    SemiPlanar,
-    Planar,
-    Packed,
-    Grayscale,
-}
-
 /// Detect YUV layout from VideoInfo using introspection
 fn detect_yuv_layout(info: &gst_video::VideoInfo) -> YuvLayout {
     // Grayscale: 1 plane
@@ -458,8 +439,10 @@ fn detect_yuv_subsampling(info: &gst_video::VideoInfo) -> YuvSubsampling {
     // Determine if there's horizontal subsampling (chroma_width ≈ luma_width / 2)
     // For odd luma dimensions, chroma = ceil(luma/2), so chroma * 2 >= luma
     // We check if chroma is roughly half of luma by seeing if 2 * chroma >= luma
-    let h_subsampled = chroma_width > 0 && chroma_width * 2 >= luma_width && chroma_width < luma_width;
-    let v_subsampled = chroma_height > 0 && chroma_height * 2 >= luma_height && chroma_height < luma_height;
+    let h_subsampled =
+        chroma_width > 0 && chroma_width * 2 >= luma_width && chroma_width < luma_width;
+    let v_subsampled =
+        chroma_height > 0 && chroma_height * 2 >= luma_height && chroma_height < luma_height;
 
     match (h_subsampled, v_subsampled) {
         (false, false) => YuvSubsampling::S444, // 4:4:4 - no subsampling
@@ -515,55 +498,257 @@ fn detect_packed_order(info: &gst_video::VideoInfo) -> PackedOrder {
     }
 }
 
-/// Check if semi-planar conversion is supported for given characteristics
-fn select_semiplanar_fn(
-    subsampling: YuvSubsampling,
-    uv_order: UvOrder,
-    bit_depth: u32,
-) -> Option<ConversionFnVariant> {
-    // Validate combination exists
-    let is_valid = match bit_depth {
-        8 => matches!(
-            (subsampling, uv_order),
-            (YuvSubsampling::S420, UvOrder::Uv | UvOrder::Vu)
-                | (YuvSubsampling::S422, UvOrder::Uv | UvOrder::Vu)
-                | (YuvSubsampling::S444, UvOrder::Uv)
-        ),
-        10 => matches!((subsampling, uv_order), (YuvSubsampling::S420, UvOrder::Uv)),
-        _ => false,
-    };
+// =============================================================================
+// Params Detection Functions - Single source of truth for what's supported
+// =============================================================================
 
-    is_valid.then_some(ConversionFnVariant::SemiPlanar)
+/// Extract YUV range and matrix from colorimetry info.
+/// Returns None if the matrix is unsupported.
+fn extract_yuv_colorimetry(
+    colorimetry: gst_video::VideoColorimetry,
+) -> Option<(YuvRange, YuvStandardMatrix)> {
+    let range = gst_to_yuv_range(colorimetry.range());
+    let matrix = gst_to_yuv_matrix(colorimetry.matrix()).ok()?;
+    Some((range, matrix))
 }
 
-/// Check if planar conversion is supported for given characteristics
-fn select_planar_fn(subsampling: YuvSubsampling, bit_depth: u32) -> Option<ConversionFnVariant> {
-    // Note: Plane order (YV12 vs I420) handled by get_plane_order_introspected()
-    let is_valid = match bit_depth {
-        8 => matches!(
-            subsampling,
-            YuvSubsampling::S420 | YuvSubsampling::S422 | YuvSubsampling::S444
-        ),
-        10 => matches!(
-            subsampling,
-            YuvSubsampling::S420 | YuvSubsampling::S422 | YuvSubsampling::S444
-        ),
-        _ => false,
-    };
+/// Determine if YUV→RGB conversion is supported and return all parameters needed for dispatch.
+fn yuv_to_rgb_params(
+    in_info: &gst_video::VideoInfo,
+    out_info: &gst_video::VideoInfo,
+) -> Option<YuvToRgbParams> {
+    // Must be YUV/Gray input and RGB output
+    if !(in_info.is_yuv() || in_info.is_gray()) || !out_info.is_rgb() {
+        return None;
+    }
 
-    is_valid.then_some(ConversionFnVariant::Planar)
+    let in_bit_depth = in_info.comp_depth(0);
+    let out_bit_depth = out_info.comp_depth(0);
+
+    // Output must be 8-bit RGB
+    if out_bit_depth != 8 {
+        return None;
+    }
+
+    // Validate RGB format is supported by yuv crate
+    if !is_rgb_format_supported_by_yuv(out_info) {
+        return None;
+    }
+
+    // Extract colorimetry from input (YUV side)
+    let (range, matrix) = extract_yuv_colorimetry(in_info.colorimetry())?;
+
+    let rgb_format = detect_rgb_format(out_info);
+    let layout = detect_yuv_layout(in_info);
+
+    match layout {
+        YuvLayout::SemiPlanar => {
+            let subsampling = detect_yuv_subsampling(in_info);
+            let uv_order = detect_uv_order(in_info);
+
+            // Check specific supported combinations
+            match in_bit_depth {
+                8 => matches!(
+                    (subsampling, uv_order),
+                    (YuvSubsampling::S420, UvOrder::Uv | UvOrder::Vu)
+                        | (YuvSubsampling::S422, UvOrder::Uv | UvOrder::Vu)
+                        | (YuvSubsampling::S444, UvOrder::Uv) // NO VU for S444!
+                ),
+                10 => {
+                    // 10-bit semi-planar: S420/S422/S444 with UV order only
+                    matches!(
+                        (subsampling, uv_order),
+                        (YuvSubsampling::S420, UvOrder::Uv)
+                            | (YuvSubsampling::S422, UvOrder::Uv)
+                            | (YuvSubsampling::S444, UvOrder::Uv)
+                    )
+                }
+                _ => false,
+            }
+            .then(|| YuvToRgbParams::SemiPlanar {
+                subsampling,
+                uv_order,
+                rgb_format,
+                bit_depth: in_bit_depth,
+                range,
+                matrix,
+            })
+        }
+
+        YuvLayout::Planar => {
+            let subsampling = detect_yuv_subsampling(in_info);
+            let plane_order = get_plane_order_introspected(in_info);
+
+            match in_bit_depth {
+                8 => matches!(
+                    subsampling,
+                    YuvSubsampling::S420 | YuvSubsampling::S422 | YuvSubsampling::S444
+                ),
+                10 => {
+                    // 10-bit planar: S420/S422 support all RGB formats,
+                    // S444 only supports RGBA output (yuv crate only has i410_to_rgba)
+                    match subsampling {
+                        YuvSubsampling::S420 | YuvSubsampling::S422 => true,
+                        YuvSubsampling::S444 => rgb_format == RgbFormat::Rgba,
+                        _ => false,
+                    }
+                }
+                _ => false,
+            }
+            .then(|| YuvToRgbParams::Planar {
+                subsampling,
+                plane_order,
+                rgb_format,
+                bit_depth: in_bit_depth,
+                range,
+                matrix,
+            })
+        }
+
+        YuvLayout::Packed => {
+            // Packed YUV ONLY outputs RGB (not RGBA/BGR/BGRA)
+            // The yuv crate functions are: yuyv422_to_rgb, uyvy422_to_rgb, etc.
+            if in_bit_depth == 8 && rgb_format == RgbFormat::Rgb {
+                Some(YuvToRgbParams::Packed {
+                    packed_order: detect_packed_order(in_info),
+                    range,
+                    matrix,
+                })
+            } else {
+                None
+            }
+        }
+
+        YuvLayout::Grayscale => {
+            // Grayscale only 8-bit supported
+            if in_bit_depth == 8 {
+                Some(YuvToRgbParams::Grayscale {
+                    rgb_format,
+                    range,
+                    matrix,
+                })
+            } else {
+                None
+            }
+        }
+    }
 }
 
-/// Check if packed conversion is supported (only 8-bit currently)
-fn select_packed_fn(_packed_order: PackedOrder, bit_depth: u32) -> Option<ConversionFnVariant> {
-    // Packed formats only supported at 8-bit
-    (bit_depth == 8).then_some(ConversionFnVariant::Packed)
+/// Determine if RGB→YUV conversion is supported and return all parameters needed for dispatch.
+fn rgb_to_yuv_params(
+    in_info: &gst_video::VideoInfo,
+    out_info: &gst_video::VideoInfo,
+) -> Option<RgbToYuvParams> {
+    // Must be RGB input and YUV/Gray output
+    if !in_info.is_rgb() || !(out_info.is_yuv() || out_info.is_gray()) {
+        return None;
+    }
+
+    let in_bit_depth = in_info.comp_depth(0);
+    let out_bit_depth = out_info.comp_depth(0);
+
+    // Only 8-bit RGB to 8-bit YUV supported
+    if in_bit_depth != 8 || out_bit_depth != 8 {
+        return None;
+    }
+
+    // Validate RGB format is supported by yuv crate
+    if !is_rgb_format_supported_by_yuv(in_info) {
+        return None;
+    }
+
+    // Extract colorimetry from output (YUV side)
+    let (range, matrix) = extract_yuv_colorimetry(out_info.colorimetry())?;
+
+    let rgb_format = detect_rgb_format(in_info);
+    let layout = detect_yuv_layout(out_info);
+
+    match layout {
+        YuvLayout::Packed => {
+            // RGB to packed YUV is NOT SUPPORTED by yuv crate
+            None
+        }
+
+        YuvLayout::SemiPlanar => {
+            let subsampling = detect_yuv_subsampling(out_info);
+            let uv_order = detect_uv_order(out_info);
+
+            // S444 only supports UV order (no NV42/VU variant functions in yuv crate)
+            matches!(
+                (subsampling, uv_order),
+                (YuvSubsampling::S420, UvOrder::Uv | UvOrder::Vu)
+                    | (YuvSubsampling::S422, UvOrder::Uv | UvOrder::Vu)
+                    | (YuvSubsampling::S444, UvOrder::Uv) // NO VU!
+            )
+            .then(|| RgbToYuvParams::SemiPlanar {
+                rgb_format,
+                subsampling,
+                uv_order,
+                range,
+                matrix,
+            })
+        }
+
+        YuvLayout::Planar => {
+            let subsampling = detect_yuv_subsampling(out_info);
+            let plane_order = get_plane_order_introspected(out_info);
+
+            // All planar subsampling types supported
+            matches!(
+                subsampling,
+                YuvSubsampling::S420 | YuvSubsampling::S422 | YuvSubsampling::S444
+            )
+            .then(|| RgbToYuvParams::Planar {
+                rgb_format,
+                subsampling,
+                plane_order,
+                range,
+                matrix,
+            })
+        }
+
+        YuvLayout::Grayscale => Some(RgbToYuvParams::Grayscale {
+            rgb_format,
+            range,
+            matrix,
+        }),
+    }
 }
 
-/// Check if grayscale conversion is supported (only 8-bit currently)
-fn select_grayscale_fn(bit_depth: u32) -> Option<ConversionFnVariant> {
-    // Grayscale only supported at 8-bit
-    (bit_depth == 8).then_some(ConversionFnVariant::Grayscale)
+/// Determine if RGB→RGB conversion is supported and return all parameters needed for dispatch.
+fn rgb_to_rgb_params(
+    in_info: &gst_video::VideoInfo,
+    out_info: &gst_video::VideoInfo,
+) -> Option<RgbToRgbParams> {
+    if !in_info.is_rgb() || !out_info.is_rgb() {
+        return None;
+    }
+
+    let in_bit_depth = in_info.comp_depth(0);
+    let out_bit_depth = out_info.comp_depth(0);
+
+    // Only 8-bit RGB conversions supported
+    if in_bit_depth != 8 || out_bit_depth != 8 {
+        return None;
+    }
+
+    // Validate both RGB formats are supported by yuv crate
+    if !is_rgb_format_supported_by_yuv(in_info) || !is_rgb_format_supported_by_yuv(out_info) {
+        return None;
+    }
+
+    let src_format = detect_rgb_format(in_info);
+    let dst_format = detect_rgb_format(out_info);
+
+    // Same format is a no-op (should be handled by passthrough mode)
+    if src_format == dst_format {
+        return None;
+    }
+
+    Some(RgbToRgbParams {
+        src_format,
+        dst_format,
+    })
 }
 
 // =============================================================================
@@ -578,16 +763,11 @@ fn convert_semiplanar_yuv_to_rgb<T>(
     height: u32,
     range: YuvRange,
     matrix: YuvStandardMatrix,
-    conv_fn_variant: ConversionFnVariant,
     subsampling: YuvSubsampling,
     uv_order: UvOrder,
     rgb_format: RgbFormat,
     bit_depth: u32,
 ) -> Result<(), String> {
-    if conv_fn_variant != ConversionFnVariant::SemiPlanar {
-        return Err("Invalid conversion function variant for semi-planar".to_string());
-    }
-
     let rgb_stride = dest.plane_stride()[0] as u32;
     let rgb_data = dest
         .plane_data_mut(0)
@@ -719,16 +899,11 @@ fn convert_planar_yuv_to_rgb<T>(
     height: u32,
     range: YuvRange,
     matrix: YuvStandardMatrix,
-    conv_fn_variant: ConversionFnVariant,
     plane_order: (usize, usize, usize),
     subsampling: YuvSubsampling,
     rgb_format: RgbFormat,
     bit_depth: u32,
 ) -> Result<(), String> {
-    if conv_fn_variant != ConversionFnVariant::Planar {
-        return Err("Invalid conversion function variant for planar".to_string());
-    }
-
     let (y_plane_idx, u_plane_idx, v_plane_idx) = plane_order;
 
     let rgb_stride = dest.plane_stride()[0] as u32;
@@ -860,18 +1035,9 @@ fn convert_packed_yuv_to_rgb<T>(
     height: u32,
     range: YuvRange,
     matrix: YuvStandardMatrix,
-    conv_fn_variant: ConversionFnVariant,
     packed_order: PackedOrder,
-    bit_depth: u32,
 ) -> Result<(), String> {
-    if conv_fn_variant != ConversionFnVariant::Packed {
-        return Err("Invalid conversion function variant for packed".to_string());
-    }
-
-    if bit_depth != 8 {
-        return Err(format!("Unsupported bit depth for packed: {}", bit_depth));
-    }
-
+    // Note: packed YUV is always 8-bit
     let yuy_plane = frame.plane_data(0).map_err(|_| "Failed to get YUY plane")?;
     let yuy_stride = frame.plane_stride()[0] as u32;
 
@@ -907,20 +1073,9 @@ fn convert_grayscale_to_rgb<T>(
     height: u32,
     range: YuvRange,
     matrix: YuvStandardMatrix,
-    conv_fn_variant: ConversionFnVariant,
-    bit_depth: u32,
+    rgb_format: RgbFormat,
 ) -> Result<(), String> {
-    if conv_fn_variant != ConversionFnVariant::Grayscale {
-        return Err("Invalid conversion function variant for grayscale".to_string());
-    }
-
-    if bit_depth != 8 {
-        return Err(format!(
-            "Unsupported bit depth for grayscale: {}",
-            bit_depth
-        ));
-    }
-
+    // Note: grayscale is always 8-bit
     let y_plane = frame.plane_data(0).map_err(|_| "Failed to get Y plane")?;
     let y_stride = frame.plane_stride()[0] as u32;
 
@@ -936,8 +1091,13 @@ fn convert_grayscale_to_rgb<T>(
         .plane_data_mut(0)
         .map_err(|_| "Failed to get RGB plane")?;
 
-    yuv::yuv400_to_rgb(&gray_image, rgb_data, rgb_stride, range, matrix)
-        .map_err(|e| format!("Grayscale to RGB conversion failed: {:?}", e))
+    match rgb_format {
+        RgbFormat::Rgb => yuv::yuv400_to_rgb(&gray_image, rgb_data, rgb_stride, range, matrix),
+        RgbFormat::Rgba => yuv::yuv400_to_rgba(&gray_image, rgb_data, rgb_stride, range, matrix),
+        RgbFormat::Bgr => yuv::yuv400_to_bgr(&gray_image, rgb_data, rgb_stride, range, matrix),
+        RgbFormat::Bgra => yuv::yuv400_to_bgra(&gray_image, rgb_data, rgb_stride, range, matrix),
+    }
+    .map_err(|e| format!("Grayscale to RGB conversion failed: {:?}", e))
 }
 
 // =============================================================================
@@ -1446,14 +1606,9 @@ fn convert_rgb_to_rgb<T>(
     dest: &mut gst_video::VideoFrameRef<&mut gst::BufferRef>,
     width: u32,
     height: u32,
+    src_format: RgbFormat,
+    dst_format: RgbFormat,
 ) -> Result<(), String> {
-    let in_info = src.info();
-    let out_info = dest.info();
-
-    // Detect RGB formats
-    let src_format = detect_rgb_format(&in_info);
-    let dst_format = detect_rgb_format(&out_info);
-
     // Get strides
     let src_stride = src.plane_stride()[0] as u32;
     let dst_stride = dest.plane_stride()[0] as u32;
@@ -1523,99 +1678,42 @@ fn convert_rgb_to_rgb<T>(
 }
 
 impl YuvConverter {
-    /// Check if conversion is supported using VideoInfo API introspection
-    /// No format enums needed - uses is_yuv(), is_rgb(), comp_depth(), etc.
-    fn supports(in_info: &gst_video::VideoInfo, out_info: &gst_video::VideoInfo) -> bool {
-        let in_is_yuv_or_gray = in_info.is_yuv() || in_info.is_gray();
-        let in_is_rgb = in_info.is_rgb();
-        let out_is_yuv_or_gray = out_info.is_yuv() || out_info.is_gray();
-        let out_is_rgb = out_info.is_rgb();
-
-        // Get bit depth
-        let in_bit_depth = in_info.comp_depth(0);
-        let out_bit_depth = out_info.comp_depth(0);
-
-        // RGB format validation for input and output
-        let in_rgb_supported = if in_is_rgb {
-            is_rgb_format_supported_by_yuv(in_info)
-        } else {
-            true // YUV formats always OK as input
-        };
-
-        let out_rgb_supported = if out_is_rgb {
-            is_rgb_format_supported_by_yuv(out_info)
-        } else {
-            true // YUV formats always OK as output
-        };
-
-        // YUV/Gray → RGB: 8-bit and 10-bit input, 8-bit output
-        // Also verify output RGB format is supported by yuv crate
-        // For 10-bit S444, only RGBA output is supported by the yuv crate
-        let yuv_to_rgb = in_is_yuv_or_gray
-            && out_is_rgb
-            && (in_bit_depth == 8 || in_bit_depth == 10)
-            && out_bit_depth == 8
-            && out_rgb_supported
-            && {
-                // Additional check for 10-bit S444: only RGBA is supported
-                if in_bit_depth == 10 && !in_info.is_gray() {
-                    let subsampling = detect_yuv_subsampling(in_info);
-                    if subsampling == YuvSubsampling::S444 {
-                        // yuv crate only has i410_to_rgba, not i410_to_rgb/bgr/bgra
-                        detect_rgb_format(out_info) == RgbFormat::Rgba
-                    } else {
-                        true
-                    }
-                } else {
-                    true
-                }
-            };
-
-        // RGB → YUV/Gray: 8-bit only (for now)
-        // Also verify input RGB format is supported by yuv crate
-        let rgb_to_yuv = in_is_rgb
-            && out_is_yuv_or_gray
-            && in_bit_depth == 8
-            && out_bit_depth == 8
-            && in_rgb_supported;
-
-        // RGB → RGB: 8-bit only (shuffle operations)
-        // Verify both input and output RGB formats are supported by yuv crate
-        let rgb_to_rgb = in_is_rgb
-            && out_is_rgb
-            && in_bit_depth == 8
-            && out_bit_depth == 8
-            && in_rgb_supported
-            && out_rgb_supported;
-
-        let supported = yuv_to_rgb || rgb_to_yuv || rgb_to_rgb;
-
-        gst::debug!(
-            CAT,
-            "YuvConverter::supports({:?} → {:?}) = {} (yuv_to_rgb={}, rgb_to_yuv={}, rgb_to_rgb={})",
-            in_info.format(),
-            out_info.format(),
-            supported,
-            yuv_to_rgb,
-            rgb_to_yuv,
-            rgb_to_rgb
-        );
-
-        supported
-    }
-
-    fn new(
-        range: YuvRange,
-        matrix: YuvStandardMatrix,
-        in_format: gst_video::VideoFormat,
-        out_format: gst_video::VideoFormat,
-    ) -> Self {
-        Self {
-            range,
-            matrix,
-            in_format,
-            out_format,
-        }
+    fn try_new(
+        in_info: &gst_video::VideoInfo,
+        out_info: &gst_video::VideoInfo,
+    ) -> Option<YuvConverter> {
+        Some(YuvConverter {
+            params: if let Some(params) = yuv_to_rgb_params(in_info, out_info) {
+                gst::debug!(
+                    CAT,
+                    "YuvConverter::conversion_params({:?} → {:?}) = YuvToRgb({:?})",
+                    in_info.format(),
+                    out_info.format(),
+                    params
+                );
+                ConversionParams::YuvToRgb(params)
+            } else if let Some(params) = rgb_to_yuv_params(in_info, out_info) {
+                gst::debug!(
+                    CAT,
+                    "YuvConverter::supports({:?} → {:?}) = RgbToYuv({:?})",
+                    in_info.format(),
+                    out_info.format(),
+                    params
+                );
+                ConversionParams::RgbToYuv(params)
+            } else if let Some(params) = rgb_to_rgb_params(in_info, out_info) {
+                gst::debug!(
+                    CAT,
+                    "YuvConverter::supports({:?} → {:?}) = RgbToRgb({:?})",
+                    in_info.format(),
+                    out_info.format(),
+                    params
+                );
+                ConversionParams::RgbToRgb(params)
+            } else {
+                return None;
+            },
+        })
     }
 
     fn convert(
@@ -1623,171 +1721,114 @@ impl YuvConverter {
         src: &gst_video::VideoFrameRef<&gst::BufferRef>,
         dest: &mut gst_video::VideoFrameRef<&mut gst::BufferRef>,
     ) -> Result<(), String> {
-        // Use frame info directly instead of rebuilding it
-        let in_info = src.info();
-        let out_info = dest.info();
-
         // Use output dimensions (visible area) - strides from input handle padding
-        let width = out_info.width();
-        let height = out_info.height();
+        let width = dest.info().width();
+        let height = dest.info().height();
 
-        // Detect conversion direction
-        let direction = detect_conversion_direction(&in_info, &out_info);
-
-        let res = match direction {
-            ConversionDirection::YuvToRgb => {
-                let bit_depth = in_info.comp_depth(0);
-                let layout = detect_yuv_layout(&in_info);
-
-                match layout {
-                    YuvLayout::SemiPlanar => {
-                        let subsampling = detect_yuv_subsampling(&in_info);
-                        let uv_order = detect_uv_order(&in_info);
-                        let rgb_format = detect_rgb_format(&out_info);
-
-                        let conv_fn = select_semiplanar_fn(subsampling, uv_order, bit_depth)
-                            .ok_or_else(|| {
-                                format!(
-                                    "No semi-planar conversion function for {:?} {:?} {}bit",
-                                    subsampling, uv_order, bit_depth
-                                )
-                            })?;
-
-                        convert_semiplanar_yuv_to_rgb(
-                            src,
-                            dest,
-                            width,
-                            height,
-                            self.range,
-                            self.matrix,
-                            conv_fn,
-                            subsampling,
-                            uv_order,
-                            rgb_format,
-                            bit_depth,
-                        )
-                    }
-                    YuvLayout::Planar => {
-                        let subsampling = detect_yuv_subsampling(&in_info);
-                        let plane_order = get_plane_order_introspected(&in_info);
-                        let rgb_format = detect_rgb_format(&out_info);
-
-                        let conv_fn =
-                            select_planar_fn(subsampling, bit_depth).ok_or_else(|| {
-                                format!(
-                                    "No planar conversion function for {:?} {}bit",
-                                    subsampling, bit_depth
-                                )
-                            })?;
-
-                        convert_planar_yuv_to_rgb(
-                            src,
-                            dest,
-                            width,
-                            height,
-                            self.range,
-                            self.matrix,
-                            conv_fn,
-                            plane_order,
-                            subsampling,
-                            rgb_format,
-                            bit_depth,
-                        )
-                    }
-                    YuvLayout::Packed => {
-                        let packed_order = detect_packed_order(&in_info);
-
-                        let conv_fn =
-                            select_packed_fn(packed_order, bit_depth).ok_or_else(|| {
-                                format!(
-                                    "No packed conversion function for {:?} {}bit",
-                                    packed_order, bit_depth
-                                )
-                            })?;
-
-                        convert_packed_yuv_to_rgb(
-                            src,
-                            dest,
-                            width,
-                            height,
-                            self.range,
-                            self.matrix,
-                            conv_fn,
-                            packed_order,
-                            bit_depth,
-                        )
-                    }
-                    YuvLayout::Grayscale => {
-                        let conv_fn = select_grayscale_fn(bit_depth).ok_or_else(|| {
-                            format!("No grayscale conversion function for {}bit", bit_depth)
-                        })?;
-
-                        convert_grayscale_to_rgb(
-                            src,
-                            dest,
-                            width,
-                            height,
-                            self.range,
-                            self.matrix,
-                            conv_fn,
-                            bit_depth,
-                        )
-                    }
+        // Dispatch based on the params stored at construction time
+        match self.params {
+            ConversionParams::YuvToRgb(params) => match params {
+                YuvToRgbParams::SemiPlanar {
+                    subsampling,
+                    uv_order,
+                    rgb_format,
+                    bit_depth,
+                    range,
+                    matrix,
+                } => convert_semiplanar_yuv_to_rgb(
+                    src,
+                    dest,
+                    width,
+                    height,
+                    range,
+                    matrix,
+                    subsampling,
+                    uv_order,
+                    rgb_format,
+                    bit_depth,
+                ),
+                YuvToRgbParams::Planar {
+                    subsampling,
+                    plane_order,
+                    rgb_format,
+                    bit_depth,
+                    range,
+                    matrix,
+                } => convert_planar_yuv_to_rgb(
+                    src,
+                    dest,
+                    width,
+                    height,
+                    range,
+                    matrix,
+                    plane_order,
+                    subsampling,
+                    rgb_format,
+                    bit_depth,
+                ),
+                YuvToRgbParams::Packed {
+                    packed_order,
+                    range,
+                    matrix,
+                } => {
+                    convert_packed_yuv_to_rgb(src, dest, width, height, range, matrix, packed_order)
                 }
-            }
-            ConversionDirection::RgbToYuv => {
-                let rgb_format = detect_rgb_format(&in_info);
-                let layout = detect_yuv_layout(&out_info);
-
-                match layout {
-                    YuvLayout::SemiPlanar => {
-                        let subsampling = detect_yuv_subsampling(&out_info);
-                        let uv_order = detect_uv_order(&out_info);
-
-                        convert_rgb_to_semiplanar_yuv(
-                            src,
-                            dest,
-                            width,
-                            height,
-                            self.range,
-                            self.matrix,
-                            rgb_format,
-                            subsampling,
-                            uv_order,
-                        )
-                    }
-                    YuvLayout::Planar => {
-                        let subsampling = detect_yuv_subsampling(&out_info);
-                        let plane_order = get_plane_order_introspected(&out_info);
-
-                        convert_rgb_to_planar_yuv(
-                            src,
-                            dest,
-                            width,
-                            height,
-                            self.range,
-                            self.matrix,
-                            rgb_format,
-                            subsampling,
-                            plane_order,
-                        )
-                    }
-                    YuvLayout::Grayscale => convert_rgb_to_grayscale(
-                        src,
-                        dest,
-                        width,
-                        height,
-                        self.range,
-                        self.matrix,
-                        rgb_format,
-                    ),
-                    YuvLayout::Packed => Err("RGB→packed YUV not supported".to_string()),
-                }
-            }
-            ConversionDirection::RgbToRgb => convert_rgb_to_rgb(src, dest, width, height),
-        };
-
-        res
+                YuvToRgbParams::Grayscale {
+                    rgb_format,
+                    range,
+                    matrix,
+                } => convert_grayscale_to_rgb(src, dest, width, height, range, matrix, rgb_format),
+            },
+            ConversionParams::RgbToYuv(params) => match params {
+                RgbToYuvParams::SemiPlanar {
+                    rgb_format,
+                    subsampling,
+                    uv_order,
+                    range,
+                    matrix,
+                } => convert_rgb_to_semiplanar_yuv(
+                    src,
+                    dest,
+                    width,
+                    height,
+                    range,
+                    matrix,
+                    rgb_format,
+                    subsampling,
+                    uv_order,
+                ),
+                RgbToYuvParams::Planar {
+                    rgb_format,
+                    subsampling,
+                    plane_order,
+                    range,
+                    matrix,
+                } => convert_rgb_to_planar_yuv(
+                    src,
+                    dest,
+                    width,
+                    height,
+                    range,
+                    matrix,
+                    rgb_format,
+                    subsampling,
+                    plane_order,
+                ),
+                RgbToYuvParams::Grayscale {
+                    rgb_format,
+                    range,
+                    matrix,
+                } => convert_rgb_to_grayscale(src, dest, width, height, range, matrix, rgb_format),
+            },
+            ConversionParams::RgbToRgb(params) => convert_rgb_to_rgb(
+                src,
+                dest,
+                width,
+                height,
+                params.src_format,
+                params.dst_format,
+            ),
+        }
     }
 }
 
