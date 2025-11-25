@@ -210,7 +210,7 @@ impl VideoConverter {
         config: Option<gst_video::VideoConverterConfig>,
     ) -> Result<Inner, glib::BoolError> {
         if let Some(converter) = YuvConverter::try_new(in_info, out_info) {
-            gst::error!(
+            gst::debug!(
                 CAT,
                 "Using yuv crate for conversion from {:?} to {:?}",
                 in_info.format(),
