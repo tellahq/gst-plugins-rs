@@ -16,8 +16,8 @@ static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
 });
 
 unsafe extern "C" {
-    fn ges_timeline_lock(timeline: *mut ges::ffi::GESTimeline);
-    fn ges_timeline_unlock(timeline: *mut ges::ffi::GESTimeline);
+    fn ges_timeline_acquire(timeline: *mut ges::ffi::GESTimeline);
+    fn ges_timeline_release(timeline: *mut ges::ffi::GESTimeline);
 }
 
 struct TimelineLockGuard {
@@ -27,7 +27,7 @@ struct TimelineLockGuard {
 impl TimelineLockGuard {
     fn new(timeline: &ges::Timeline) -> Self {
         unsafe {
-            ges_timeline_lock(timeline.as_ptr() as *mut ges::ffi::GESTimeline);
+            ges_timeline_acquire(timeline.as_ptr() as *mut ges::ffi::GESTimeline);
         }
         Self {
             timeline: timeline.clone(),
@@ -38,7 +38,7 @@ impl TimelineLockGuard {
 impl Drop for TimelineLockGuard {
     fn drop(&mut self) {
         unsafe {
-            ges_timeline_unlock(self.timeline.as_ptr() as *mut ges::ffi::GESTimeline);
+            ges_timeline_release(self.timeline.as_ptr() as *mut ges::ffi::GESTimeline);
         }
     }
 }
