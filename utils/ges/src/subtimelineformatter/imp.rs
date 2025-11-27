@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 use crate::subtimelineprimarymanager::SubtimelinePrimaryManager;
 use ges::prelude::*;
 use ges::subclass::prelude::*;
-use gst::glib::{self, Properties};
+use gst::glib::{self, translate::*, Properties};
 
 static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
     gst::DebugCategory::new(
@@ -12,6 +12,14 @@ static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
         Some("GES Subtimeline Primary Manager"),
     )
 });
+
+extern "C" {
+    fn ges_project_set_loaded(
+        project: *mut ges::ffi::GESProject,
+        formatter: *mut ges::ffi::GESFormatter,
+        error: *mut *mut glib::ffi::GError,
+    ) -> glib::ffi::gboolean;
+}
 
 #[derive(Default, Properties)]
 #[properties(wrapper_type = super::SubTimelineFormatter)]
@@ -69,7 +77,7 @@ impl FormatterImpl for SubTimelineFormatter {
             );
             Ok(())
         } else {
-            gst::error!(CAT, "Can not load UI");
+            gst::error!(CAT, "Can not load {uri:?}");
             Err(glib::Error::new(
                 gst::CoreError::Failed,
                 &format!("URI '{}' is not a subtimeline reference", uri),
@@ -91,6 +99,37 @@ impl FormatterImpl for SubTimelineFormatter {
         // Parse primary ID from URI
         let primary_id = Self::parse_primary_id_from_uri(uri)?;
         SubtimelinePrimaryManager::get().make_replica(&primary_id, timeline)?;
+
+        // FIXME: Mark as loaded in an idle callback because ges_formatter_load ()
+        // expects the project to be loaded only after starting its main loop,
+        // in case we are in the main context already.
+        let formatter = self.obj().clone().upcast::<ges::Formatter>();
+        let project = timeline
+            .asset()
+            .unwrap()
+            .downcast::<ges::Project>()
+            .unwrap();
+        if glib::MainContext::default().is_owner() {
+            glib::source::idle_add_local_once(move || unsafe {
+                ges_project_set_loaded(
+                    project.to_glib_none().0,
+                    formatter.to_glib_none().0,
+                    std::ptr::null_mut(),
+                );
+            });
+        } else {
+            gst::debug!(
+                CAT,
+                "Not main context owner, calling ges_project_set_loaded directly"
+            );
+            unsafe {
+                ges_project_set_loaded(
+                    project.to_glib_none().0,
+                    formatter.to_glib_none().0,
+                    std::ptr::null_mut(),
+                );
+            }
+        }
 
         gst::info!(
             CAT,
