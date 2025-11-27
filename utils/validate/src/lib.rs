@@ -1,8 +1,18 @@
 #![allow(clippy::non_send_fields_in_send_ty, unused_doc_comments)]
 
+use std::sync::LazyLock;
+
 use gst::glib;
 
 mod check_last_frame_qrcode;
+
+pub(crate) static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
+    gst::DebugCategory::new(
+        "rsvalidate",
+        gst::DebugColorFlags::empty(),
+        Some("GStreamer Validate Rust Plugin"),
+    )
+});
 
 fn plugin_init(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
     if let Err(err) = check_last_frame_qrcode::register_validate_actions(plugin) {

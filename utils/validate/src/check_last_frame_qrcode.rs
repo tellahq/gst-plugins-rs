@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
+use crate::CAT;
 use gst::glib;
 use gst::prelude::*;
 use std::sync::Once;
@@ -11,7 +12,7 @@ fn find_sink(
     pipeline: &gst::Pipeline,
     sink_name: Option<&str>,
     factory_name: Option<&str>,
-    caps: &Option<gst::Caps>,
+    caps: Option<&gst::Caps>,
 ) -> Result<gst::Element, String> {
     let found_sink = pipeline.iterate_recurse().find(|element| {
         if !element.has_property_with_type("last-sample", gst::Sample::static_type()) {
@@ -29,7 +30,7 @@ fn find_sink(
         }
 
         // Check caps if specified
-        if let Some(ref expected_caps) = caps {
+        if let Some(expected_caps) = caps {
             // Check all sink pads
             for pad in element.iterate_sink_pads() {
                 let pad = match pad {
@@ -51,7 +52,54 @@ fn find_sink(
     found_sink.ok_or_else(|| "No matching sink found in pipeline".to_string())
 }
 
-fn decode_qrcode_from_sample(sample: &gst::Sample) -> Result<String, String> {
+fn validate_json_fields(json_str: &str, expected_fields: &gst::Structure) -> Result<(), String> {
+    let json_value: serde_json::Value = serde_json::from_str(json_str)
+        .map_err(|e| format!("Failed to parse QR code content as JSON: {}", e))?;
+
+    for field_name in expected_fields.fields() {
+        let expected_value = expected_fields.value(field_name).map_err(|e| {
+            format!(
+                "Failed to get expected value for field '{}': {}",
+                field_name, e
+            )
+        })?;
+
+        // Serialize the expected GValue to JSON string, then deserialize to serde_json::Value
+        // for simple comparison
+        let expected_json: serde_json::Value = serde_json::from_str(
+            expected_value
+                .serialize()
+                .map_err(|e| {
+                    format!(
+                        "Failed to serialize expected value for field '{}': {}",
+                        field_name, e
+                    )
+                })?
+                .as_str(),
+        )
+        .map_err(|e| {
+            format!(
+                "Failed to parse expected value as JSON for field '{}': {}",
+                field_name, e
+            )
+        })?;
+
+        let json_value = json_value
+            .get(field_name.as_str())
+            .ok_or_else(|| format!("Field '{}' not found in JSON", field_name))?;
+
+        if json_value != &expected_json {
+            return Err(format!(
+                "JSON field '{}' mismatch: expected '{}', got '{}'",
+                field_name, expected_json, json_value
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn decode_qrcodes_from_sample(sample: &gst::Sample) -> Result<Vec<String>, String> {
     let buffer_ref = sample.buffer().ok_or("Sample has no buffer")?;
     let caps = sample.caps().ok_or("Sample has no caps")?;
 
@@ -93,16 +141,16 @@ fn decode_qrcode_from_sample(sample: &gst::Sample) -> Result<String, String> {
     let mut img = rqrr::PreparedImage::prepare(gray_image);
     let grids = img.detect_grids();
 
-    if grids.is_empty() {
-        return Err("No QR code found in frame".to_string());
+    // Decode all QR codes found
+    let mut decoded_codes = Vec::new();
+    for grid in grids {
+        let (_meta, content) = grid
+            .decode()
+            .map_err(|e| format!("Failed to decode QR code: {:?}", e))?;
+        decoded_codes.push(content);
     }
 
-    // Decode the first QR code found
-    let (_meta, content) = grids[0]
-        .decode()
-        .map_err(|e| format!("Failed to decode QR code: {:?}", e))?;
-
-    Ok(content)
+    Ok(decoded_codes)
 }
 
 fn check_last_frame_qrcode(
@@ -124,7 +172,7 @@ fn check_last_frame_qrcode(
         &pipeline,
         sink_name.as_deref(),
         factory_name.as_deref(),
-        &caps,
+        caps.as_ref(),
     )
     .map_err(gst_validate::ActionError::Error)?;
 
@@ -138,27 +186,118 @@ fn check_last_frame_qrcode(
             ))
         })?;
 
-    let decoded_data =
-        decode_qrcode_from_sample(&sample).map_err(gst_validate::ActionError::Error)?;
+    let decoded_codes =
+        decode_qrcodes_from_sample(&sample).map_err(gst_validate::ActionError::Error)?;
 
-    // Get expected data
-    let expected_data = structure.get::<String>("expected-data").map_err(|_| {
-        gst_validate::ActionError::Error("Missing required parameter 'expected-data'".to_string())
-    })?;
+    // Check if JSON field validation is requested
+    let json_field_specs: Option<Vec<gst::Structure>> =
+        if let Ok(single_spec) = structure.get::<gst::Structure>("expected-json-fields") {
+            Some(vec![single_spec])
+        } else if let Ok(array) = structure.get::<gst::List>("expected-json-fields") {
+            Some(
+                array
+                    .iter()
+                    .filter_map(|v| v.get::<gst::Structure>().ok())
+                    .collect(),
+            )
+        } else {
+            None
+        };
 
-    // Compare
-    if decoded_data != expected_data {
+    if let Some(expected_json_fields) = json_field_specs {
+        if decoded_codes.len() != expected_json_fields.len() {
+            return Err(gst_validate::ActionError::Error(format!(
+                "JSON field validation: expected {} QR code(s), but found {} QR code(s): {:?}",
+                expected_json_fields.len(),
+                decoded_codes.len(),
+                decoded_codes
+            )));
+        }
+
+        // Validate each QR code against its corresponding field spec
+        for (i, (qr_data, field_spec)) in decoded_codes
+            .iter()
+            .zip(expected_json_fields.iter())
+            .enumerate()
+        {
+            validate_json_fields(qr_data, field_spec)
+                .map_err(|e| gst_validate::ActionError::Error(format!("QR code #{}: {}", i, e)))?;
+        }
+
+        gst::debug!(
+            CAT,
+            obj = scenario,
+            "Successfully validated {} QR code(s) with JSON field validation",
+            decoded_codes.len()
+        );
+        return Ok(gst_validate::ActionSuccess::Ok);
+    }
+
+    // Get expected data - can be either a string or an array of strings
+    let expected_values: Vec<String> = if let Ok(single_value) =
+        structure.get::<String>("expected-data")
+    {
+        // Single string value (backwards compatible)
+        vec![single_value]
+    } else if let Ok(array) = structure.get::<gst::List>("expected-data") {
+        // Array of strings
+        array
+            .iter()
+            .filter_map(|v| v.get::<String>().ok())
+            .collect()
+    } else {
         return Err(gst_validate::ActionError::Error(format!(
-            "QR code data mismatch: expected '{}', got '{}'",
-            expected_data, decoded_data
+            "Either a string or an array of strings must be provided for 'expected-data' parameter, got {:?} \
+                and expected-json-fields parameter is {:?}",
+            structure.get::<glib::Value>("expected-data"),
+            structure.get::<glib::Value>("expected-json-fields")
+        )));
+    };
+
+    if expected_values.is_empty() {
+        if !decoded_codes.is_empty() {
+            return Err(gst_validate::ActionError::Error(format!(
+                "Expected no QR codes, but found {} QR code(s): {:?}",
+                decoded_codes.len(),
+                decoded_codes
+            )));
+        }
+        gst::debug!(
+            CAT,
+            obj = scenario,
+            "Successfully verified no QR codes in frame"
+        );
+        return Ok(gst_validate::ActionSuccess::Ok);
+    }
+
+    if decoded_codes.len() != expected_values.len() {
+        return Err(gst_validate::ActionError::Error(format!(
+            "QR code count mismatch: expected {} QR code(s) {:?}, but found {} QR code(s): {:?}",
+            expected_values.len(),
+            expected_values,
+            decoded_codes.len(),
+            decoded_codes
+        )));
+    }
+
+    let mut sorted_decoded = decoded_codes.clone();
+    let mut sorted_expected = expected_values.clone();
+    sorted_decoded.sort();
+    sorted_expected.sort();
+
+    if sorted_decoded != sorted_expected {
+        return Err(gst_validate::ActionError::Error(format!(
+            "QR code data mismatch: expected {:?}, got {:?}",
+            expected_values, decoded_codes
         )));
     }
 
     gst::debug!(
-        gst::CAT_DEFAULT,
+        CAT,
         obj = scenario,
-        "Successfully validated QR code data: '{}'",
-        decoded_data
+        "Successfully validated {} QR code(s): {:?}",
+        decoded_codes.len(),
+        decoded_codes
     );
 
     Ok(gst_validate::ActionSuccess::Ok)
@@ -198,14 +337,36 @@ pub fn register_validate_actions(plugin: &gst::Plugin) -> Result<(), glib::BoolE
         .parameter(
             gst_validate::ActionParameterBuilder::new(
                 "expected-data",
-                "The expected QR code data content",
+                "The expected QR code data content. Can be:\n\
+                 - A single string to check for one QR code\n\
+                 - An array of strings to check for multiple QR codes (exact match, order-agnostic)\n\
+                 - An empty array to verify no QR codes are present\n\
+                 Note: Cannot be used together with 'expected-json-fields'.",
             )
             .add_type("string")
-            .mandatory()
+            .add_type("GstValueArray")
+            .build(),
+        )
+        .parameter(
+            gst_validate::ActionParameterBuilder::new(
+                "expected-json-fields",
+                "JSON field validation specification. Can be:\n\
+                 - A single GstStructure for validating one QR code's JSON fields\n\
+                 - An array of GstStructures for validating multiple QR codes (one spec per QR code, matched by index)\n\
+                 Each GstStructure contains field names and expected values to validate in the QR code's JSON content.\n\
+                 Supports nested fields using dot notation (e.g., 'user.name').\n\
+                 Field values can be strings, numbers, or booleans.\n\
+                 Note: Cannot be used together with 'expected-data'.",
+            )
+            .add_type("GstStructure")
+            .add_type("GstValueArray")
             .build(),
         )
         .description(
-            "Checks that a QR code in the last frame of the specified sink contains the expected data. \
+            "Checks that QR codes in the last frame of the specified sink contain the expected data. \
+             Supports two validation modes:\n\
+             1. Exact string matching (expected-data): Validates single QR codes, multiple QR codes, or verifying no QR codes are present.\n\
+             2. JSON field matching (expected-json-fields): Parses QR code as JSON and validates specific fields (supports nested fields with dot notation).\n\
              This allows validating QR code generation in video streams."
         )
         .flags(gst_validate::ActionTypeFlags::CHECK)
