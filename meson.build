@@ -131,7 +131,7 @@ plugins = {
 
   'ges': {
     'library': 'libgstrsges',
-    'gst-version': '>=1.27',
+    'gst-version': '>=1.26',
     'extra-deps': {'gstreamer-validate-1.0': {'enabled-features': ['validate']}},
   },
 

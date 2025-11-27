@@ -47,12 +47,14 @@ members = [
     "text/wrap",
 
     "utils/fallbackswitch",
+    "utils/ges",
     "utils/livesync",
     "utils/togglerecord",
     "utils/segmentclipper",
     "utils/tracers",
     "utils/uridecodepool",
     "utils/uriplaylistbin",
+    "utils/validate",
 
     "video/cdg",
     "video/closedcaption",
@@ -107,11 +109,13 @@ default-members = [
     "text/wrap",
 
     "utils/fallbackswitch",
+    "utils/ges",
     "utils/livesync",
     "utils/togglerecord",
     "utils/tracers",
     "utils/uridecodepool",
     "utils/uriplaylistbin",
+    "utils/validate",
 
     "video/cdg",
     "video/ffv1",

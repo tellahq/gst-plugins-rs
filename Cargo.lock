@@ -2152,6 +2152,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "g2gen"
+version = "1.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c5a7e0eb46f83a20260b850117d204366674e85d3a908d90865c78df9a6b1dfc"
+dependencies = [
+ "g2poly",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
+]
+
+[[package]]
+name = "g2p"
+version = "1.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "539e2644c030d3bf4cd208cb842d2ce2f80e82e6e8472390bcef83ceba0d80ad"
+dependencies = [
+ "g2gen",
+ "g2poly",
+]
+
+[[package]]
+name = "g2poly"
+version = "1.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "312d2295c7302019c395cfb90dacd00a82a2eabd700429bba9c7a3f38dbbe11b"
+
+[[package]]
 name = "gdk-pixbuf"
 version = "0.21.0"
 source = "git+https://github.com/thiblahute/gtk-rs-core?rev=e6b43dc4d7cdb1ab62d6522c90807e6cd40973aa#e6b43dc4d7cdb1ab62d6522c90807e6cd40973aa"
@@ -2715,6 +2743,19 @@ dependencies = [
  "m3u8-rs",
  "quick-xml 0.37.2",
  "serde",
+]
+
+[[package]]
+name = "gst-plugin-ges"
+version = "0.14.0-alpha.1"
+dependencies = [
+ "gst-plugin-version-helper",
+ "gstreamer",
+ "gstreamer-base",
+ "gstreamer-controller",
+ "gstreamer-editing-services",
+ "gstreamer-validate",
+ "itertools 0.14.0",
 ]
 
 [[package]]
@@ -3340,6 +3381,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "gst-plugin-validate"
+version = "0.14.0-alpha.1"
+dependencies = [
+ "gst-plugin-version-helper",
+ "gstreamer",
+ "gstreamer-base",
+ "gstreamer-validate",
+ "gstreamer-video",
+ "image",
+ "rqrr",
+ "serde_json",
+]
+
+[[package]]
 name = "gst-plugin-version-helper"
 version = "0.8.1"
 dependencies = [
@@ -3498,7 +3553,6 @@ dependencies = [
 [[package]]
 name = "gstreamer"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "cfg-if",
  "futures-channel",
@@ -3524,7 +3578,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-allocators"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "glib",
  "gstreamer",
@@ -3535,7 +3588,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-allocators-sys"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "glib-sys",
  "gobject-sys",
@@ -3547,7 +3599,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-analytics"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "glib",
  "gstreamer",
@@ -3558,7 +3609,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-analytics-sys"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "glib-sys",
  "gstreamer-sys",
@@ -3569,7 +3619,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-app"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "futures-core",
  "futures-sink",
@@ -3583,7 +3632,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-app-sys"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "glib-sys",
  "gstreamer-base-sys",
@@ -3595,7 +3643,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-audio"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "cfg-if",
  "glib",
@@ -3610,7 +3657,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-audio-sys"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "glib-sys",
  "gobject-sys",
@@ -3623,7 +3669,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-base"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "atomic_refcell",
  "cfg-if",
@@ -3636,7 +3681,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-base-sys"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "glib-sys",
  "gobject-sys",
@@ -3648,7 +3692,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-check"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "glib",
  "gstreamer",
@@ -3658,7 +3701,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-check-sys"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "glib-sys",
  "gobject-sys",
@@ -3668,9 +3710,55 @@ dependencies = [
 ]
 
 [[package]]
+name = "gstreamer-controller"
+version = "0.24.0"
+dependencies = [
+ "glib",
+ "gstreamer",
+ "gstreamer-controller-sys",
+]
+
+[[package]]
+name = "gstreamer-controller-sys"
+version = "0.24.0"
+dependencies = [
+ "glib-sys",
+ "gobject-sys",
+ "gstreamer-sys",
+ "libc",
+ "pkg-config",
+ "system-deps 7.0.3",
+]
+
+[[package]]
+name = "gstreamer-editing-services"
+version = "0.24.0"
+dependencies = [
+ "gio",
+ "glib",
+ "gstreamer",
+ "gstreamer-base",
+ "gstreamer-editing-services-sys",
+ "gstreamer-pbutils",
+ "libc",
+]
+
+[[package]]
+name = "gstreamer-editing-services-sys"
+version = "0.24.0"
+dependencies = [
+ "gio-sys",
+ "glib-sys",
+ "gobject-sys",
+ "gstreamer-pbutils-sys",
+ "gstreamer-sys",
+ "libc",
+ "system-deps 7.0.3",
+]
+
+[[package]]
 name = "gstreamer-gl"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "glib",
  "gstreamer",
@@ -3683,7 +3771,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-gl-egl"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "glib",
  "gstreamer",
@@ -3695,7 +3782,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-gl-egl-sys"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "glib-sys",
  "gstreamer-gl-sys",
@@ -3706,7 +3792,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-gl-sys"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "glib-sys",
  "gobject-sys",
@@ -3720,7 +3805,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-gl-wayland"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "glib",
  "gstreamer",
@@ -3732,7 +3816,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-gl-wayland-sys"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "glib-sys",
  "gstreamer-gl-sys",
@@ -3743,7 +3826,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-gl-x11"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "glib",
  "gstreamer",
@@ -3755,7 +3837,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-gl-x11-sys"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "glib-sys",
  "gstreamer-gl-sys",
@@ -3766,7 +3847,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-net"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "gio",
  "glib",
@@ -3777,7 +3857,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-net-sys"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "gio-sys",
  "glib-sys",
@@ -3789,7 +3868,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-pbutils"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "glib",
  "gstreamer",
@@ -3803,7 +3881,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-pbutils-sys"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "glib-sys",
  "gobject-sys",
@@ -3817,7 +3894,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-rtp"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "glib",
  "gstreamer",
@@ -3828,7 +3904,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-rtp-sys"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "glib-sys",
  "gstreamer-base-sys",
@@ -3840,7 +3915,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-sdp"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "glib",
  "gstreamer",
@@ -3850,7 +3924,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-sdp-sys"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "glib-sys",
  "gstreamer-sys",
@@ -3861,7 +3934,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-sys"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "cfg-if",
  "glib-sys",
@@ -3873,7 +3945,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-utils"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "gstreamer",
  "gstreamer-app",
@@ -3884,7 +3955,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-validate"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "glib",
  "gstreamer",
@@ -3895,7 +3965,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-validate-sys"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "gio-sys",
  "glib-sys",
@@ -3908,7 +3977,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-video"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "cfg-if",
  "futures-channel",
@@ -3924,7 +3992,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-video-sys"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "glib-sys",
  "gobject-sys",
@@ -3937,7 +4004,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-webrtc"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "glib",
  "gstreamer",
@@ -3949,7 +4015,6 @@ dependencies = [
 [[package]]
 name = "gstreamer-webrtc-sys"
 version = "0.24.0"
-source = "git+https://github.com/thiblahute/gstreamer-rs.git?branch=sequence_1.26.0#6fb0c75d1a9ad702709eaa044ed83da9cd4b85c9"
 dependencies = [
  "glib-sys",
  "gstreamer-sdp-sys",
@@ -6574,6 +6639,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rqrr"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad0cd0432e6beb2f86aa4c8af1bb5edcf3c9bcb9d4836facc048664205458575"
+dependencies = [
+ "g2p",
+ "image",
+ "lru 0.12.5",
+]
+
+[[package]]
 name = "rsa"
 version = "0.9.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9066,3 +9142,6 @@ dependencies = [
  "syn 2.0.100",
 ]
 
+[[patch.unused]]
+name = "gstreamer-tag"
+version = "0.24.0"
