@@ -12,7 +12,7 @@ rust-version.workspace = true
 gst.workspace = true
 gst-base.workspace = true
 gst-controller.workspace = true
-ges = {workspace = true, features = ["v1_26"]}
+ges = {workspace = true, features = ["v1_28"]}
 gst-validate = { workspace = true, optional = true }
 itertools = "0.14"
 
