@@ -10,7 +10,6 @@ description = "GStreamer skia plugin"
 
 [dependencies]
 skia = { package = "skia-safe", git = "https://github.com/thiblahute/rust-skia.git", branch="pkgconfig", features = ["gpu", "gl"] }
-once_cell = "1.18"
 gst.workspace = true
 gst-base.workspace = true
 gst-video = { workspace = true, features = ["v1_20"] }
