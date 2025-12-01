@@ -19,7 +19,7 @@ static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
 #[derive(Debug, Clone, Copy)]
 pub struct Settings {
     pub border_radius_px: f64,
-    pub corner_smoothing_pct: f64,
+    pub curvature: f64, // CSS superellipse K value: 0=bevel, 1=round, 2=squircle
     pub padding_px: i32,
     pub crop_left: i32,
     pub crop_right: i32,
@@ -32,7 +32,7 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             border_radius_px: DEFAULT_BORDER_RADIUS,
-            corner_smoothing_pct: 0.,
+            curvature: 2.0, // Default to squircle (CSS superellipse(2))
             padding_px: 0,
             crop_left: 0,
             crop_right: 0,
@@ -81,10 +81,10 @@ pub(crate) fn reshape_properties() -> Vec<glib::ParamSpec> {
             .mutable_playing()
             .controllable()
             .build(),
-        glib::ParamSpecDouble::builder("corner-smoothing-pct")
-            .nick("Corner smoothing in percentage")
-            .blurb("Draw rounded corners with corner smoothing")
-            .default_value(0.0)
+        glib::ParamSpecDouble::builder("curvature")
+            .nick("Curvature (CSS K value)")
+            .blurb("Superellipse curvature: 0=bevel, 1=round, 2=squircle")
+            .default_value(2.0)
             .mutable_playing()
             .controllable()
             .build(),
@@ -156,8 +156,8 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
             "border-radius-px" => {
                 settings.border_radius_px = value.get().expect("type checked upstream");
             }
-            "corner-smoothing-pct" => {
-                settings.corner_smoothing_pct = value.get().expect("type checked upstream");
+            "curvature" => {
+                settings.curvature = value.get().expect("type checked upstream");
             }
             "padding-px" => {
                 settings.padding_px = value.get().expect("type checked upstream");
@@ -185,7 +185,7 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
         let settings = self.settings();
         match pspec.name() {
             "border-radius-px" => settings.border_radius_px.to_value(),
-            "corner-smoothing-pct" => settings.corner_smoothing_pct.to_value(),
+            "curvature" => settings.curvature.to_value(),
             "padding-px" => settings.padding_px.to_value(),
             "crop-left" => settings.crop_left.to_value(),
             "crop-right" => settings.crop_right.to_value(),
@@ -283,23 +283,31 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
         // Clip out the rounded corners if border radius is set
         let border_radius = self.settings().border_radius_px as f32;
         if border_radius > 0.0 {
-            let corner_smoothing = (self.settings().corner_smoothing_pct / 100.0) as f32;
-            let squircle_path =
-                crate::reshape::squircle::get_skia_path(crate::reshape::squircle::SquircleParams {
-                    width: rects.original_dst_rect.width(),
-                    height: rects.original_dst_rect.height(),
-                    corner_radius: Some(border_radius),
-                    corner_smoothing,
-                    preserve_smoothing: None,
-                    top_left_corner_radius: None,
-                    top_right_corner_radius: None,
-                    bottom_right_corner_radius: None,
-                    bottom_left_corner_radius: None,
-                });
+            let curvature = self.settings().curvature as f32;
+
+            gst::trace!(
+                CAT,
+                imp = self,
+                "BORDER RADIUS: {:?} / CURVATURE: {:?}",
+                border_radius,
+                curvature
+            );
+            let squircle_path = crate::reshape::squircle::get_skia_path(
+                rects.original_dst_rect.width(),
+                rects.original_dst_rect.height(),
+                border_radius,
+                curvature,
+            );
             let translated_path = squircle_path.with_offset((
                 rects.original_dst_rect.left(),
                 rects.original_dst_rect.top(),
             ));
+            gst::trace!(
+                CAT,
+                imp = self,
+                "Clipping with superellipse path: {:?}",
+                translated_path,
+            );
 
             canvas.clip_path(&translated_path, skia::ClipOp::Difference, true);
             canvas.clear(skia::Color::TRANSPARENT);
@@ -910,7 +918,7 @@ pub fn add_custom_meta(outbuf: &mut gst::BufferRef, settings: std::sync::MutexGu
     };
     let s = meta.mut_structure();
     s.set("border-radius-px", settings.border_radius_px);
-    s.set("corner-smoothing-pct", settings.corner_smoothing_pct);
+    s.set("curvature", settings.curvature);
 }
 
 pub fn add_original_frame_meta(outbuf: &mut gst::BufferRef, inbuf: &gst::BufferRef) {
