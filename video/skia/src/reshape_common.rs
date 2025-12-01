@@ -283,10 +283,25 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
         // Clip out the rounded corners if border radius is set
         let border_radius = self.settings().border_radius_px as f32;
         if border_radius > 0.0 {
-            let rounded_dst_rect =
-                skia::RRect::new_rect_xy(rects.original_dst_rect, border_radius, border_radius);
+            let corner_smoothing = (self.settings().corner_smoothing_pct / 100.0) as f32;
+            let squircle_path =
+                crate::reshape::squircle::get_skia_path(crate::reshape::squircle::SquircleParams {
+                    width: rects.original_dst_rect.width(),
+                    height: rects.original_dst_rect.height(),
+                    corner_radius: Some(border_radius),
+                    corner_smoothing,
+                    preserve_smoothing: None,
+                    top_left_corner_radius: None,
+                    top_right_corner_radius: None,
+                    bottom_right_corner_radius: None,
+                    bottom_left_corner_radius: None,
+                });
+            let translated_path = squircle_path.with_offset((
+                rects.original_dst_rect.left(),
+                rects.original_dst_rect.top(),
+            ));
 
-            canvas.clip_rrect(rounded_dst_rect, skia::ClipOp::Difference, true);
+            canvas.clip_path(&translated_path, skia::ClipOp::Difference, true);
             canvas.clear(skia::Color::TRANSPARENT);
         }
 
