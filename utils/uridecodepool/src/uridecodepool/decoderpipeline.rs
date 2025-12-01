@@ -48,6 +48,15 @@ impl TargetSrcState {
         }
     }
 
+    pub fn element(&self) -> Option<super::UriDecodePoolSrc> {
+        match self {
+            TargetSrcState::InUse(target_src) | TargetSrcState::Pending(target_src) => {
+                Some(target_src.clone())
+            }
+            TargetSrcState::None => None,
+        }
+    }
+
     pub fn relates_to(&self, src: &super::UriDecodePoolSrc) -> bool {
         match self {
             TargetSrcState::InUse(target_src) | TargetSrcState::Pending(target_src) => {
@@ -632,7 +641,12 @@ impl DecoderPipeline {
                             "Could not post message {message:?}: {e:?}"
                         );
                     }
-                } else if let TargetSrcState::InUse(target) = self.target_src() {
+                } else if let Some(target) = self.target_src().element() {
+                    gst::log!(
+                        CAT,
+                        obj = self.pipeline_ref(),
+                        "Posting {ctx:?} message to the target src bus",
+                    );
                     if let Err(e) = target.post_message(message.to_owned()) {
                         gst::warning!(
                             CAT,
