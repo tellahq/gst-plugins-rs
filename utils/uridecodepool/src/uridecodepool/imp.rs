@@ -729,6 +729,16 @@ impl UriDecodePoolSrc {
         gst::info!(CAT, imp = self, "Setting decoderpipe to {decoderpipe:?}");
         drop(state);
 
+        for context in obj.contexts() {
+            gst::debug!(
+                CAT,
+                imp = self,
+                "Notifying new context {:?} to decoderpipe",
+                context.context_type()
+            );
+            decoderpipe.pipeline().set_context(&context);
+        }
+
         self.obj().notify("pipeline");
     }
 
@@ -1064,6 +1074,24 @@ impl ObjectImpl for UriDecodePoolSrc {
 impl GstObjectImpl for UriDecodePoolSrc {}
 
 impl ElementImpl for UriDecodePoolSrc {
+    fn set_context(&self, context: &gst::Context) {
+        self.parent_set_context(context);
+
+        // Propagate the context to the pool pipeline if we have one.
+        // This is critical for GL context sharing - when the GESPipeline responds
+        // to a need-context message with a have-context, we need to forward that
+        // context to the pool pipeline so its GL elements can use the same context.
+        if let Some(decoderpipe) = self.decoderpipe() {
+            gst::debug!(
+                CAT,
+                imp = self,
+                "Propagating context {:?} to pool pipeline",
+                context.context_type()
+            );
+            decoderpipe.pipeline().set_context(context);
+        }
+    }
+
     fn change_state(
         &self,
         transition: gst::StateChange,
