@@ -3207,6 +3207,7 @@ dependencies = [
  "gstreamer-editing-services",
  "gstreamer-gl",
  "gstreamer-video",
+ "once_cell",
  "skia-safe",
  "tracing",
 ]

@@ -11,6 +11,7 @@ use gst::glib;
 use gst::prelude::*;
 
 mod imp;
+pub mod squircle;
 
 glib::wrapper! {
     pub struct SkiaReshape(ObjectSubclass<imp::SkiaReshape>) @extends gst_video::VideoFilter, gst_base::BaseTransform, gst::Element, gst::Object;
