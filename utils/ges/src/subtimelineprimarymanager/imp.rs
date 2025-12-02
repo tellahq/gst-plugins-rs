@@ -394,7 +394,16 @@ impl Replica {
             // Skip non-writable/non-readable properties
             if !property.flags().contains(glib::ParamFlags::WRITABLE)
                 || !property.flags().contains(glib::ParamFlags::READABLE)
+                || property.value_type().is_a(glib::Object::static_type())
             {
+                gst::log!(
+                    CAT,
+                    "Skipping property '{}' during child property binding (writable: {}, readable: {}, is_object: {})",
+                    property.name(),
+                    property.flags().contains(glib::ParamFlags::WRITABLE),
+                    property.flags().contains(glib::ParamFlags::READABLE),
+                    property.value_type().is_a(glib::Object::static_type())
+                );
                 continue;
             }
 
