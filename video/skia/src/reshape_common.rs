@@ -285,32 +285,30 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
         if border_radius > 0.0 {
             let curvature = self.settings().curvature as f32;
 
-            gst::trace!(
-                CAT,
-                imp = self,
-                "BORDER RADIUS: {:?} / CURVATURE: {:?}",
-                border_radius,
-                curvature
-            );
             let squircle_path = crate::reshape::squircle::get_skia_path(
-                rects.original_dst_rect.width(),
-                rects.original_dst_rect.height(),
+                rects.dst_rect.width(),
+                rects.dst_rect.height(),
                 border_radius,
                 curvature,
             );
-            let translated_path = squircle_path.with_offset((
-                rects.original_dst_rect.left(),
-                rects.original_dst_rect.top(),
-            ));
-            gst::trace!(
-                CAT,
-                imp = self,
-                "Clipping with superellipse path: {:?}",
-                translated_path,
-            );
+            let translated_path =
+                squircle_path.with_offset((rects.dst_rect.left(), rects.dst_rect.top()));
 
-            canvas.clip_path(&translated_path, skia::ClipOp::Difference, true);
-            canvas.clear(skia::Color::TRANSPARENT);
+            // Create corners-only path using path difference (full canvas minus squircle)
+            // Use full canvas size to ensure all pixels outside squircle are cleared
+            let canvas_size = canvas.base_layer_size();
+            let full_canvas_rect =
+                skia::Rect::from_wh(canvas_size.width as f32, canvas_size.height as f32);
+            let mut outer_path = skia::Path::new();
+            outer_path.add_rect(full_canvas_rect, None);
+
+            // Draw transparent on corners using BlendMode::Clear for proper anti-aliasing
+            if let Some(corners_path) = outer_path.op(&translated_path, skia::PathOp::Difference) {
+                let mut clear_paint = skia::Paint::default();
+                clear_paint.set_blend_mode(skia::BlendMode::Clear);
+                clear_paint.set_anti_alias(true);
+                canvas.draw_path(&corners_path, &clear_paint);
+            }
         }
 
         // Emit the draw signal to allow custom drawing on the canvas
