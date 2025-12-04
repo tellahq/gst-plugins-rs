@@ -645,7 +645,7 @@ impl DecoderPipeline {
                     gst::log!(
                         CAT,
                         obj = self.pipeline_ref(),
-                        "Posting {ctx:?} message to the target src bus",
+                        "Posting message to the target src bus",
                     );
                     if let Err(e) = target.post_message(message.to_owned()) {
                         gst::warning!(
