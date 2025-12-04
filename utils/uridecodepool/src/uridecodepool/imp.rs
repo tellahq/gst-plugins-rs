@@ -860,14 +860,9 @@ impl UriDecodePoolSrc {
         }
 
         if let Some(segment) = state.current_segment.clone() {
-            let mut builder = gst::event::Segment::builder(
-                new_segment
-                    .segment()
-                    .downcast_ref::<gst::ClockTime>()
-                    .unwrap(),
-            )
-            .running_time_offset(new_segment.running_time_offset())
-            .seqnum(new_segment.seqnum());
+            let mut builder = gst::event::Segment::builder(&segment)
+                .running_time_offset(new_segment.running_time_offset())
+                .seqnum(new_segment.seqnum());
 
             if let Some(seqnum) = state.segment_seqnum.as_ref() {
                 builder = builder.seqnum(*seqnum);
