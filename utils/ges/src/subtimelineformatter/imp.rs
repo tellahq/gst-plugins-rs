@@ -69,15 +69,9 @@ impl ObjectImpl for SubTimelineFormatter {}
 impl FormatterImpl for SubTimelineFormatter {
     fn can_load_uri(&self, uri: &str) -> Result<(), glib::Error> {
         if Self::is_subtimeline_uri(uri) {
-            gst::error!(
-                CAT,
-                imp = self,
-                "SubTimelineFormatter can handle URI: {}",
-                uri
-            );
             Ok(())
         } else {
-            gst::error!(CAT, "Can not load {uri:?}");
+            gst::info!(CAT, imp = self, "Can not load {uri:?}");
             Err(glib::Error::new(
                 gst::CoreError::Failed,
                 &format!("URI '{}' is not a subtimeline reference", uri),
@@ -86,7 +80,6 @@ impl FormatterImpl for SubTimelineFormatter {
     }
 
     fn load_from_uri(&self, timeline: &ges::Timeline, uri: &str) -> Result<(), glib::Error> {
-        gst::error!(CAT, imp = self, "REFCOUNT: {}", timeline.ref_count());
         gst::info!(CAT, imp = self, "Loading subtimeline from URI: {} - ", uri);
 
         if !Self::is_subtimeline_uri(uri) {
