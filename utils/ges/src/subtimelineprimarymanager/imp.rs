@@ -15,33 +15,6 @@ static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
     )
 });
 
-unsafe extern "C" {
-    fn ges_timeline_acquire(timeline: *mut ges::ffi::GESTimeline);
-    fn ges_timeline_release(timeline: *mut ges::ffi::GESTimeline);
-}
-
-struct TimelineLockGuard {
-    timeline: ges::Timeline,
-}
-
-impl TimelineLockGuard {
-    fn new(timeline: &ges::Timeline) -> Self {
-        unsafe {
-            ges_timeline_acquire(timeline.as_ptr() as *mut ges::ffi::GESTimeline);
-        }
-        Self {
-            timeline: timeline.clone(),
-        }
-    }
-}
-
-impl Drop for TimelineLockGuard {
-    fn drop(&mut self) {
-        unsafe {
-            ges_timeline_release(self.timeline.as_ptr() as *mut ges::ffi::GESTimeline);
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 struct Replica {
@@ -906,16 +879,15 @@ impl Primary {
         });
     }
 
-    fn iter_replicas(self, timeline_guards: Vec<TimelineLockGuard>) -> ReplicasIter {
+    fn iter_replicas(self, timeline_refs: Vec<ges::Timeline>) -> ReplicasIter {
         let primary_inner = self.0.lock().unwrap();
-
         let replicas = primary_inner.replicas.clone().into_iter();
         drop(primary_inner);
-        return ReplicasIter {
+        ReplicasIter {
             replicas,
-            _timeline_guards: timeline_guards,
+            _timeline_refs: timeline_refs,
             primary: self,
-        };
+        }
     }
 }
 
@@ -932,8 +904,8 @@ unsafe impl Sync for SubtimelinePrimaryManager {}
 /// Iterator over replicas with their associated primary info
 struct ReplicasIter {
     replicas: std::vec::IntoIter<Replica>,
-    // Keep timelines alive for the duration of iteration to prevent weak refs from becoming invalid
-    _timeline_guards: Vec<TimelineLockGuard>,
+    // Strong refs to prevent weak refs from becoming invalid during iteration
+    _timeline_refs: Vec<ges::Timeline>,
     primary: Primary,
 }
 
@@ -1026,17 +998,18 @@ impl SubtimelinePrimaryManager {
         Ok(())
     }
 
-    fn primary(&self, primary_id: &str) -> Option<(Primary, Vec<TimelineLockGuard>)> {
+    // Returns strong refs to timelines to prevent weak refs from becoming invalid
+    fn primary(&self, primary_id: &str) -> Option<(Primary, Vec<ges::Timeline>)> {
         let primaries = self.primaries.lock().unwrap();
         let Some(primary) = primaries.get(primary_id).cloned() else {
             return None;
         };
 
         let mut primary_inner = primary.lock().unwrap();
-        let mut timeline_locks = vec![TimelineLockGuard::new(&primary_inner.timeline)];
+        let mut timeline_refs = vec![primary_inner.timeline.clone()];
         primary_inner.replicas.retain(|replica| {
             if let Some(replica_timeline) = replica.timeline.upgrade() {
-                timeline_locks.push(TimelineLockGuard::new(&replica_timeline));
+                timeline_refs.push(replica_timeline);
                 true
             } else {
                 false
@@ -1044,7 +1017,7 @@ impl SubtimelinePrimaryManager {
         });
         drop(primary_inner);
 
-        Some((primary, timeline_locks))
+        Some((primary, timeline_refs))
     }
 
     pub fn primary_timeline(&self, primary_id: &str) -> Option<ges::Timeline> {
@@ -1059,7 +1032,7 @@ impl SubtimelinePrimaryManager {
         primary_id: &str,
         replica_timeline: &ges::Timeline,
     ) -> Result<(), glib::Error> {
-        let (primary, _timelines_lock) = self.primary(primary_id).ok_or_else(|| {
+        let (primary, _timeline_refs) = self.primary(primary_id).ok_or_else(|| {
             glib::Error::new(
                 gst::CoreError::Failed,
                 &format!("Primary '{}' not found", primary_id),
@@ -1069,7 +1042,8 @@ impl SubtimelinePrimaryManager {
         let mut primary_inner = primary.lock().unwrap();
 
         let primary_timeline = primary_inner.timeline.clone();
-        let _replica_lock = TimelineLockGuard::new(replica_timeline);
+        // Keep strong ref to replica_timeline during operation
+        let _replica_ref = replica_timeline.clone();
 
         let mut replica = Replica {
             id: primary_inner.n_replicas,
@@ -1402,7 +1376,7 @@ impl SubtimelinePrimaryManager {
         );
 
         let layer_priority = layer.priority();
-        let (primary, timeline_locks) = self
+        let (primary, timeline_refs) = self
             .primary(primary_id)
             .expect("Propagating 'layer-removed' on a timeline that is not registered as primary");
 
@@ -1414,7 +1388,7 @@ impl SubtimelinePrimaryManager {
             layer_priority
         );
 
-        for mut replica in primary.iter_replicas(timeline_locks) {
+        for mut replica in primary.iter_replicas(timeline_refs) {
             if let Err(e) = replica.remove_layer(&layer) {
                 gst::error!(
                     CAT,
@@ -1467,7 +1441,7 @@ impl SubtimelinePrimaryManager {
             primary_id
         );
 
-        let (primary, _timeline_locks) = self
+        let (primary, _timeline_refs) = self
             .primary(primary_id)
             .expect("Propagating 'clip-added' on a timeline that is not registered as primary");
 
@@ -1598,7 +1572,7 @@ impl SubtimelinePrimaryManager {
         }
 
         // Set up control binding tracking for the track element
-        let (primary, _timeline_locks) = self.primary(primary_id).expect(
+        let (primary, _timeline_refs) = self.primary(primary_id).expect(
             "Setting up control binding tracking on a timeline that is not registered as primary",
         );
 
@@ -1872,11 +1846,11 @@ impl SubtimelinePrimaryManager {
     }
 
     fn iter_replicas(&self, primary_id: &str) -> ReplicasIter {
-        let (primary, timeline_locks) = self.primary(primary_id).expect(&format!(
+        let (primary, timeline_refs) = self.primary(primary_id).expect(
             "Trying to iterate replicas for a timeline that is not registered as primary",
-        ));
+        );
 
-        primary.iter_replicas(timeline_locks)
+        primary.iter_replicas(timeline_refs)
     }
 
     fn propagate_clip_moved_layer(&self, primary_id: &str, primary_clip: &ges::Clip) {
