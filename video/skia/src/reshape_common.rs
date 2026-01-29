@@ -1,6 +1,8 @@
 #[cfg(feature = "ges")]
 use ges::prelude::*;
 use gst::glib;
+use gst::prelude::*;
+use gst_base::prelude::*;
 use gst_video::subclass::prelude::*;
 use skia;
 
@@ -318,7 +320,12 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
         let context_boxed = crate::SkiaContext::new(direct);
         self.obj().emit_by_name::<()>(
             "draw",
-            &[buffer, &video_info, &canvas_boxed, &context_boxed],
+            &[
+                buffer as &dyn glib::value::ToValue,
+                video_info as &dyn glib::value::ToValue,
+                &canvas_boxed as &dyn glib::value::ToValue,
+                &context_boxed as &dyn glib::value::ToValue,
+            ],
         );
 
         Ok(gst::FlowSuccess::Ok)

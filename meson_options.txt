@@ -79,7 +79,7 @@ option('webp', type: 'feature', value: 'auto', description: 'Build webp plugin')
 option('with-ges', type: 'feature', value: 'auto', description: 'Enable GStreamer Editing Services support')
 option('doc', type: 'feature', value: 'auto', yield: true,
        description: 'Enable documentation')
-option('examples', type: 'feature', value: 'disabled', yield: true,
+option('examples', type: 'feature', value: 'disabled',
        description: 'Build examples')
 option('tests', type : 'feature', value : 'auto', yield : true,
        description : 'Build and enable unit tests')
