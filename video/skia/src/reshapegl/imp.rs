@@ -122,11 +122,38 @@ impl SkiaReshapeGL {
             return Err(gst::loggable_error!(CAT, "Input image is invalid"));
         }
 
+        // Skia GPU surfaces always produce premultiplied alpha, but GStreamer's
+        // only works with unpremultiplied alpha. Wrap the render
+        // in a save_layer with a SkSL unpremultiply ImageFilter + BlendMode::Src
+        // so the layer restore writes straight-alpha values to the output texture.
+        let unpremul_effect = skia::RuntimeEffect::make_for_shader(
+            "uniform shader child; \
+             half4 main(float2 coord) { \
+               half4 c = child.eval(coord); \
+               if (c.a > 0.0) { return half4(c.rgb / c.a, c.a); } \
+               return c; \
+             }",
+            None,
+        )
+        .map_err(|e| gst::loggable_error!(CAT, "SkSL compile error: {}", e))?;
+
+        let builder = skia::runtime_effect::RuntimeShaderBuilder::new(unpremul_effect);
+        let unpremul_filter = skia::image_filters::runtime_shader(&builder, "child", None)
+            .ok_or_else(|| {
+                gst::loggable_error!(CAT, "Failed to create unpremultiply image filter")
+            })?;
+
+        let mut layer_paint = skia::Paint::default();
+        layer_paint.set_blend_mode(skia::BlendMode::Src);
+        layer_paint.set_image_filter(unpremul_filter);
+
         let canvas = out_surface.canvas();
+        canvas.save_layer(&skia::canvas::SaveLayerRec::default().paint(&layer_paint));
+
         self.reshape(buffer, video_info, canvas, &image, Some(skia_context))
             .map_err(|e| gst::loggable_error!(CAT, "Failed to reshape: {}", e))?;
 
-        /* Execute the drawing commands and submit them to the GPU */
+        canvas.restore();
         skia_context.flush_and_submit();
 
         Ok(())
