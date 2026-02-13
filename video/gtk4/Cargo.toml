@@ -13,6 +13,9 @@ gtk.workspace = true
 gdk-wayland = { workspace = true, optional = true}
 gdk-x11 = { workspace = true, optional = true}
 
+glib.workspace = true
+gio.workspace = true
+
 gst = { workspace = true, features = ["v1_16"] }
 gst-base.workspace = true
 gst-video.workspace = true

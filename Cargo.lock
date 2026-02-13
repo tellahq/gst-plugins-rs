@@ -2790,6 +2790,8 @@ dependencies = [
  "gdk4-wayland",
  "gdk4-win32",
  "gdk4-x11",
+ "gio",
+ "glib",
  "gst-plugin-version-helper",
  "gstreamer",
  "gstreamer-allocators",
