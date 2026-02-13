@@ -85,6 +85,9 @@ use gst::subclass::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 
+#[cfg(feature = "ges")]
+use ges::prelude::*;
+
 static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
     gst::DebugCategory::new(
         "pipeline-snapshot",
@@ -318,6 +321,8 @@ impl Settings {
 struct State {
     current_folder: u32,
     pipelines: HashMap<ElementPtr, glib::WeakRef<gst::Element>>,
+    #[cfg(feature = "ges")]
+    timelines: HashMap<ElementPtr, glib::WeakRef<gst::Object>>,
 }
 
 #[derive(Properties, Debug, Default)]
@@ -429,6 +434,22 @@ impl TracerImpl for PipelineSnapshot {
                 state.pipelines.len()
             );
         }
+
+        #[cfg(feature = "ges")]
+        if element.is::<ges::Timeline>() {
+            let timeline_ptr = ElementPtr::from_ref(element);
+            let weak = element.upcast_ref::<gst::Object>().downgrade();
+            let mut state = self.state.lock().unwrap();
+            state.timelines.insert(timeline_ptr, weak);
+            gst::error!(
+                CAT,
+                imp = self,
+                "new timeline: {} ({:?}) got {} now",
+                element.name(),
+                timeline_ptr,
+                state.timelines.len()
+            );
+        }
     }
 
     fn object_destroyed(&self, _ts: u64, object: std::ptr::NonNull<gst::ffi::GstObject>) {
@@ -441,6 +462,17 @@ impl TracerImpl for PipelineSnapshot {
                 "Pipeline removed: {:?} - {} remaining",
                 object,
                 state.pipelines.len()
+            );
+        }
+
+        #[cfg(feature = "ges")]
+        if state.timelines.remove(&object).is_some() {
+            gst::debug!(
+                CAT,
+                imp = self,
+                "Timeline removed: {:?} - {} remaining",
+                object,
+                state.timelines.len()
             );
         }
     }
@@ -640,6 +672,73 @@ impl PipelineSnapshot {
                 gst::warning!(CAT, imp = self, "Failed to write {}: {}", dot_path, e);
             }
         }
+
+        #[cfg(feature = "ges")]
+        {
+            let timelines = {
+                let state = self.state.lock().unwrap();
+                gst::log!(
+                    CAT,
+                    imp = self,
+                    "dumping {} timelines",
+                    state.timelines.len()
+                );
+
+                state
+                    .timelines
+                    .iter()
+                    .filter_map(|(ptr, w)| {
+                        let timeline = w.upgrade();
+
+                        if timeline.is_none() {
+                            gst::warning!(CAT, imp = self, "Timeline {ptr:?} disappeared");
+                        }
+                        timeline
+                    })
+                    .collect::<Vec<_>>()
+            };
+
+            for timeline in timelines.into_iter() {
+                gst::debug!(CAT, imp = self, "dump timeline {}", timeline.name());
+
+                let xges_path = format!(
+                    "{dot_dir}/{ts}{}{}.xges",
+                    settings.dot_prefix.as_ref().map_or("", |s| s.as_str()),
+                    timeline.name(),
+                );
+
+                let uri = match glib::filename_to_uri(
+                    std::path::absolute(Path::new(&xges_path)).unwrap_or(PathBuf::from(&xges_path)),
+                    None::<&str>,
+                ) {
+                    Ok(uri) => uri,
+                    Err(e) => {
+                        gst::warning!(
+                            CAT,
+                            imp = self,
+                            "Failed to convert {} to URI: {}",
+                            xges_path,
+                            e
+                        );
+                        continue;
+                    }
+                };
+
+                if let Err(e) = timeline
+                    .downcast_ref::<ges::Timeline>()
+                    .unwrap()
+                    .save_to_uri(&uri, None::<&ges::Asset>, true)
+                {
+                    gst::warning!(
+                        CAT,
+                        imp = self,
+                        "Failed to save timeline to {}: {}",
+                        xges_path,
+                        e
+                    );
+                }
+            }
+        }
     }
 
     fn write_dot_file_atomically(&self, path: &Path, data: &[u8]) -> std::io::Result<()> {
@@ -710,7 +809,7 @@ impl PipelineSnapshot {
                             let entry = entry.ok()?; // Handle possible errors when reading directory entries
                             let path = entry.path();
                             let extension = path.extension()?.to_str()?; // Get the extension as a string
-                            if extension.ends_with(".dot") {
+                            if extension == "dot" || extension == "xges" {
                                 Some(path.to_path_buf())
                             } else {
                                 None
@@ -732,7 +831,7 @@ impl PipelineSnapshot {
                             let entry = entry.ok()?;
                             let path = entry.path();
                             let extension = path.extension()?.to_str()?;
-                            if extension == "dot" {
+                            if extension == "dot" || extension == "xges" {
                                 Some(path.to_path_buf())
                             } else {
                                 None

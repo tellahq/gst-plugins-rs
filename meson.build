@@ -188,7 +188,10 @@ plugins = {
   'regex': {'library': 'libgstregex'},
   'textwrap': {'library': 'libgsttextwrap'},
 
-  'tracers': {'library': 'libgstrstracers'},
+  'tracers': {
+    'library': 'libgstrstracers',
+    'extra-deps': {'gst-editing-services-1.0': {'enabled-features': ['ges']}},
+  },
   'uriplaylistbin': {
     'library': 'libgsturiplaylistbin',
     'examples': ['playlist'],
