@@ -1053,7 +1053,7 @@ dependencies = [
 [[package]]
 name = "cairo-rs"
 version = "0.22.0"
-source = "git+https://github.com/gtk-rs/gtk-rs-core?branch=main#8a033dc370ea784a7d7d37d487e872004635037e"
+source = "git+https://github.com/thiblahute/gtk-rs-core?rev=8a033dc370ea784a7d7d37d487e872004635037e#8a033dc370ea784a7d7d37d487e872004635037e"
 dependencies = [
  "bitflags 2.10.0",
  "cairo-sys-rs",
@@ -1064,7 +1064,7 @@ dependencies = [
 [[package]]
 name = "cairo-sys-rs"
 version = "0.22.0"
-source = "git+https://github.com/gtk-rs/gtk-rs-core?branch=main#8a033dc370ea784a7d7d37d487e872004635037e"
+source = "git+https://github.com/thiblahute/gtk-rs-core?rev=8a033dc370ea784a7d7d37d487e872004635037e#8a033dc370ea784a7d7d37d487e872004635037e"
 dependencies = [
  "glib-sys",
  "libc",
@@ -2202,7 +2202,7 @@ checksum = "312d2295c7302019c395cfb90dacd00a82a2eabd700429bba9c7a3f38dbbe11b"
 [[package]]
 name = "gdk-pixbuf"
 version = "0.22.0"
-source = "git+https://github.com/gtk-rs/gtk-rs-core?branch=main#8a033dc370ea784a7d7d37d487e872004635037e"
+source = "git+https://github.com/thiblahute/gtk-rs-core?rev=8a033dc370ea784a7d7d37d487e872004635037e#8a033dc370ea784a7d7d37d487e872004635037e"
 dependencies = [
  "gdk-pixbuf-sys",
  "gio",
@@ -2213,7 +2213,7 @@ dependencies = [
 [[package]]
 name = "gdk-pixbuf-sys"
 version = "0.22.0"
-source = "git+https://github.com/gtk-rs/gtk-rs-core?branch=main#8a033dc370ea784a7d7d37d487e872004635037e"
+source = "git+https://github.com/thiblahute/gtk-rs-core?rev=8a033dc370ea784a7d7d37d487e872004635037e#8a033dc370ea784a7d7d37d487e872004635037e"
 dependencies = [
  "gio-sys",
  "glib-sys",
@@ -2386,7 +2386,7 @@ checksum = "07e28edb80900c19c28f1072f2e8aeca7fa06b23cd4169cefe1af5aa3260783f"
 [[package]]
 name = "gio"
 version = "0.22.0"
-source = "git+https://github.com/gtk-rs/gtk-rs-core?branch=main#8a033dc370ea784a7d7d37d487e872004635037e"
+source = "git+https://github.com/thiblahute/gtk-rs-core?rev=8a033dc370ea784a7d7d37d487e872004635037e#8a033dc370ea784a7d7d37d487e872004635037e"
 dependencies = [
  "futures-channel",
  "futures-core",
@@ -2402,13 +2402,13 @@ dependencies = [
 [[package]]
 name = "gio-sys"
 version = "0.22.0"
-source = "git+https://github.com/gtk-rs/gtk-rs-core?branch=main#8a033dc370ea784a7d7d37d487e872004635037e"
+source = "git+https://github.com/thiblahute/gtk-rs-core?rev=8a033dc370ea784a7d7d37d487e872004635037e#8a033dc370ea784a7d7d37d487e872004635037e"
 dependencies = [
  "glib-sys",
  "gobject-sys",
  "libc",
  "system-deps 7.0.3",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2434,7 +2434,7 @@ dependencies = [
 [[package]]
 name = "glib"
 version = "0.22.0"
-source = "git+https://github.com/gtk-rs/gtk-rs-core?branch=main#8a033dc370ea784a7d7d37d487e872004635037e"
+source = "git+https://github.com/thiblahute/gtk-rs-core?rev=8a033dc370ea784a7d7d37d487e872004635037e#8a033dc370ea784a7d7d37d487e872004635037e"
 dependencies = [
  "bitflags 2.10.0",
  "futures-channel",
@@ -2454,7 +2454,7 @@ dependencies = [
 [[package]]
 name = "glib-macros"
 version = "0.22.0"
-source = "git+https://github.com/gtk-rs/gtk-rs-core?branch=main#8a033dc370ea784a7d7d37d487e872004635037e"
+source = "git+https://github.com/thiblahute/gtk-rs-core?rev=8a033dc370ea784a7d7d37d487e872004635037e#8a033dc370ea784a7d7d37d487e872004635037e"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -2465,7 +2465,7 @@ dependencies = [
 [[package]]
 name = "glib-sys"
 version = "0.22.0"
-source = "git+https://github.com/gtk-rs/gtk-rs-core?branch=main#8a033dc370ea784a7d7d37d487e872004635037e"
+source = "git+https://github.com/thiblahute/gtk-rs-core?rev=8a033dc370ea784a7d7d37d487e872004635037e#8a033dc370ea784a7d7d37d487e872004635037e"
 dependencies = [
  "libc",
  "system-deps 7.0.3",
@@ -2480,7 +2480,7 @@ checksum = "a8d1add55171497b4705a648c6b583acafb01d58050a51727785f0b2c8e0a2b2"
 [[package]]
 name = "gobject-sys"
 version = "0.22.0"
-source = "git+https://github.com/gtk-rs/gtk-rs-core?branch=main#8a033dc370ea784a7d7d37d487e872004635037e"
+source = "git+https://github.com/thiblahute/gtk-rs-core?rev=8a033dc370ea784a7d7d37d487e872004635037e#8a033dc370ea784a7d7d37d487e872004635037e"
 dependencies = [
  "glib-sys",
  "libc",
@@ -2508,7 +2508,7 @@ dependencies = [
 [[package]]
 name = "graphene-rs"
 version = "0.22.0"
-source = "git+https://github.com/gtk-rs/gtk-rs-core?branch=main#8a033dc370ea784a7d7d37d487e872004635037e"
+source = "git+https://github.com/thiblahute/gtk-rs-core?rev=8a033dc370ea784a7d7d37d487e872004635037e#8a033dc370ea784a7d7d37d487e872004635037e"
 dependencies = [
  "glib",
  "graphene-sys",
@@ -2518,7 +2518,7 @@ dependencies = [
 [[package]]
 name = "graphene-sys"
 version = "0.22.0"
-source = "git+https://github.com/gtk-rs/gtk-rs-core?branch=main#8a033dc370ea784a7d7d37d487e872004635037e"
+source = "git+https://github.com/thiblahute/gtk-rs-core?rev=8a033dc370ea784a7d7d37d487e872004635037e#8a033dc370ea784a7d7d37d487e872004635037e"
 dependencies = [
  "glib-sys",
  "libc",
@@ -3388,6 +3388,7 @@ dependencies = [
  "gstreamer",
  "gstreamer-app",
  "gstreamer-base",
+ "gstreamer-validate",
  "parking_lot",
  "tokio",
  "url",
@@ -3604,7 +3605,7 @@ dependencies = [
 [[package]]
 name = "gstreamer"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "cfg-if",
  "futures-channel",
@@ -3630,7 +3631,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-allocators"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "glib",
  "gstreamer",
@@ -3641,7 +3642,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-allocators-sys"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "glib-sys",
  "gobject-sys",
@@ -3653,7 +3654,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-analytics"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "glib",
  "gstreamer",
@@ -3664,7 +3665,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-analytics-sys"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "glib-sys",
  "gstreamer-sys",
@@ -3675,7 +3676,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-app"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "futures-core",
  "futures-sink",
@@ -3689,7 +3690,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-app-sys"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "glib-sys",
  "gstreamer-base-sys",
@@ -3701,7 +3702,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-audio"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "cfg-if",
  "glib",
@@ -3716,7 +3717,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-audio-sys"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "glib-sys",
  "gobject-sys",
@@ -3729,7 +3730,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-base"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "atomic_refcell",
  "cfg-if",
@@ -3742,7 +3743,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-base-sys"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "glib-sys",
  "gobject-sys",
@@ -3754,7 +3755,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-check"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "glib",
  "gstreamer",
@@ -3764,7 +3765,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-check-sys"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "glib-sys",
  "gobject-sys",
@@ -3776,7 +3777,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-editing-services"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "gio",
  "glib",
@@ -3790,7 +3791,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-editing-services-sys"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "gio-sys",
  "glib-sys",
@@ -3804,7 +3805,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-gl"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "glib",
  "gstreamer",
@@ -3817,7 +3818,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-gl-egl"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "glib",
  "gstreamer",
@@ -3829,7 +3830,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-gl-egl-sys"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "glib-sys",
  "gstreamer-gl-sys",
@@ -3840,7 +3841,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-gl-sys"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "glib-sys",
  "gobject-sys",
@@ -3854,7 +3855,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-gl-wayland"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "glib",
  "gstreamer",
@@ -3866,7 +3867,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-gl-wayland-sys"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "glib-sys",
  "gstreamer-gl-sys",
@@ -3877,7 +3878,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-gl-x11"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "glib",
  "gstreamer",
@@ -3889,7 +3890,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-gl-x11-sys"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "glib-sys",
  "gstreamer-gl-sys",
@@ -3900,7 +3901,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-net"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "gio",
  "glib",
@@ -3911,7 +3912,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-net-sys"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "gio-sys",
  "glib-sys",
@@ -3923,7 +3924,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-pbutils"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "glib",
  "gstreamer",
@@ -3937,7 +3938,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-pbutils-sys"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "glib-sys",
  "gobject-sys",
@@ -3951,7 +3952,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-rtp"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "glib",
  "gstreamer",
@@ -3962,7 +3963,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-rtp-sys"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "glib-sys",
  "gstreamer-base-sys",
@@ -3974,7 +3975,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-sdp"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "glib",
  "gstreamer",
@@ -3984,7 +3985,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-sdp-sys"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "glib-sys",
  "gstreamer-sys",
@@ -3995,7 +3996,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-sys"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "cfg-if",
  "glib-sys",
@@ -4007,7 +4008,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-utils"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "gstreamer",
  "gstreamer-app",
@@ -4018,7 +4019,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-validate"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "glib",
  "gstreamer",
@@ -4029,7 +4030,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-validate-sys"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "gio-sys",
  "glib-sys",
@@ -4042,7 +4043,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-video"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "cfg-if",
  "futures-channel",
@@ -4058,7 +4059,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-video-sys"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "glib-sys",
  "gobject-sys",
@@ -4071,7 +4072,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-webrtc"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "glib",
  "gstreamer",
@@ -4083,7 +4084,7 @@ dependencies = [
 [[package]]
 name = "gstreamer-webrtc-sys"
 version = "0.24.0"
-source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#05b5db39d2f0b93f26f1287ba7af17e8cdd41451"
+source = "git+https://github.com/tellahq/gstreamer-rs.git?branch=tla_main#02017c1cfd490d9c5de470c38fdc28942d763048"
 dependencies = [
  "glib-sys",
  "gstreamer-sdp-sys",
@@ -5777,7 +5778,7 @@ dependencies = [
 [[package]]
 name = "pango"
 version = "0.22.0"
-source = "git+https://github.com/gtk-rs/gtk-rs-core?branch=main#8a033dc370ea784a7d7d37d487e872004635037e"
+source = "git+https://github.com/thiblahute/gtk-rs-core?rev=8a033dc370ea784a7d7d37d487e872004635037e#8a033dc370ea784a7d7d37d487e872004635037e"
 dependencies = [
  "gio",
  "glib",
@@ -5788,7 +5789,7 @@ dependencies = [
 [[package]]
 name = "pango-sys"
 version = "0.22.0"
-source = "git+https://github.com/gtk-rs/gtk-rs-core?branch=main#8a033dc370ea784a7d7d37d487e872004635037e"
+source = "git+https://github.com/thiblahute/gtk-rs-core?rev=8a033dc370ea784a7d7d37d487e872004635037e#8a033dc370ea784a7d7d37d487e872004635037e"
 dependencies = [
  "glib-sys",
  "gobject-sys",
@@ -5799,7 +5800,7 @@ dependencies = [
 [[package]]
 name = "pangocairo"
 version = "0.22.0"
-source = "git+https://github.com/gtk-rs/gtk-rs-core?branch=main#8a033dc370ea784a7d7d37d487e872004635037e"
+source = "git+https://github.com/thiblahute/gtk-rs-core?rev=8a033dc370ea784a7d7d37d487e872004635037e#8a033dc370ea784a7d7d37d487e872004635037e"
 dependencies = [
  "cairo-rs",
  "glib",
@@ -5811,7 +5812,7 @@ dependencies = [
 [[package]]
 name = "pangocairo-sys"
 version = "0.22.0"
-source = "git+https://github.com/gtk-rs/gtk-rs-core?branch=main#8a033dc370ea784a7d7d37d487e872004635037e"
+source = "git+https://github.com/thiblahute/gtk-rs-core?rev=8a033dc370ea784a7d7d37d487e872004635037e#8a033dc370ea784a7d7d37d487e872004635037e"
 dependencies = [
  "cairo-sys-rs",
  "glib-sys",

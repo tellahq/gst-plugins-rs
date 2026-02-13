@@ -197,3 +197,21 @@ gst-video = { package = "gstreamer-video", git = "https://github.com/tellahq/gst
 gst-webrtc = { package = "gstreamer-webrtc", git = "https://github.com/tellahq/gstreamer-rs.git", branch = "tla_main" }
 ges = { package = "gstreamer-editing-services", git = "https://github.com/tellahq/gstreamer-rs.git", branch = "tla_main" }
 gst-validate = { package = "gstreamer-validate", git = "https://github.com/tellahq/gstreamer-rs.git", branch = "tla_main" }
+
+[patch."https://github.com/gtk-rs/gtk-rs-core"]
+glib = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "8a033dc370ea784a7d7d37d487e872004635037e" }
+gio = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "8a033dc370ea784a7d7d37d487e872004635037e" }
+cairo-rs = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "8a033dc370ea784a7d7d37d487e872004635037e", features = ["use_glib"] }
+pango = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "8a033dc370ea784a7d7d37d487e872004635037e" }
+pangocairo = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "8a033dc370ea784a7d7d37d487e872004635037e" }
+glib-sys = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "8a033dc370ea784a7d7d37d487e872004635037e" }
+gio-sys = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "8a033dc370ea784a7d7d37d487e872004635037e" }
+gobject-sys = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "8a033dc370ea784a7d7d37d487e872004635037e" }
+cairo-sys-rs = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "8a033dc370ea784a7d7d37d487e872004635037e" }
+pango-sys = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "8a033dc370ea784a7d7d37d487e872004635037e" }
+pangocairo-sys = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "8a033dc370ea784a7d7d37d487e872004635037e" }
+gdk-pixbuf = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "8a033dc370ea784a7d7d37d487e872004635037e" }
+gdk-pixbuf-sys = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "8a033dc370ea784a7d7d37d487e872004635037e" }
+graphene-rs = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "8a033dc370ea784a7d7d37d487e872004635037e" }
+graphene-sys = { git = "https://github.com/thiblahute/gtk-rs-core", rev = "8a033dc370ea784a7d7d37d487e872004635037e" }
+
