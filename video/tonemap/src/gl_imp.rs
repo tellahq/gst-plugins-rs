@@ -103,9 +103,9 @@ void main() {
         return;
     }
 
-    vec3 linear_2020 = pq_eotf(rgba.rgb);
-    vec3 linear_709 = BT2020_TO_BT709 * linear_2020;
-    vec3 tonemapped = hable_tonemap(max(linear_709, 0.0));
+    vec3 linear = pq_eotf(rgba.rgb);
+    // Skip BT.2020→BT.709 primaries — glcolorconvert already did it
+    vec3 tonemapped = hable_tonemap(max(linear, 0.0));
     vec3 sdr = bt709_oetf(tonemapped);
 
     gl_FragColor = vec4(clamp(sdr, 0.0, 1.0), rgba.a);
