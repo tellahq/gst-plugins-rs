@@ -82,17 +82,20 @@ float hlg_oetf_inv(float e) {
     if (e <= 0.5) {
         return e * e / 3.0;
     } else {
-        return exp((e - HLG_C) / HLG_A) + HLG_B;
+        return (exp((e - HLG_C) / HLG_A) + HLG_B) / 12.0;
     }
 }
 
 vec3 hlg_eotf(vec3 e) {
-    // Inverse OETF → scene-linear, then scale for 1000-nit peak / 100-nit ref
-    return vec3(
+    // Inverse OETF → scene-linear [0, 1]
+    vec3 scene = vec3(
         hlg_oetf_inv(e.r),
         hlg_oetf_inv(e.g),
         hlg_oetf_inv(e.b)
-    ) / 12.0 * 10.0;
+    );
+    // OOTF (gamma 1.2) + scale by 1000/npl (npl=100 → *10)
+    // Matches zimg: pow(inverse_oetf(x), 1.2) * (1000.0 / npl)
+    return pow(scene, vec3(1.2)) * 10.0;
 }
 
 float hable_curve(float x) {
@@ -101,13 +104,13 @@ float hable_curve(float x) {
           - HABLE_E / HABLE_F;
 }
 
-vec3 hable_tonemap(vec3 c) {
-    float w = 1.0 / hable_curve(HABLE_W);
-    return vec3(
-        hable_curve(c.r) * w,
-        hable_curve(c.g) * w,
-        hable_curve(c.b) * w
-    );
+vec3 hable_tonemap(vec3 c, float peak) {
+    // Max-component tonemapping (preserves color ratios, matches FFmpeg)
+    float sig = max(max(c.r, c.g), c.b);
+    float sig_old = sig;
+    sig = hable_curve(sig) / hable_curve(peak);
+    // Scale all channels uniformly
+    return (sig_old > 1e-6) ? c * (sig / sig_old) : c;
 }
 
 vec3 bt709_oetf(vec3 l) {
@@ -127,14 +130,17 @@ void main() {
     }
 
     vec3 linear_hdr;
+    float peak;
     if (transfer == 1) {
         linear_hdr = hlg_eotf(rgba.rgb);
+        peak = 10.0;  // 1000 nits / 100 npl — matches zimg/FFmpeg for HLG
     } else {
         linear_hdr = pq_eotf(rgba.rgb);
+        peak = HABLE_W; // 11.2
     }
 
     vec3 linear_709 = BT2020_TO_BT709 * linear_hdr;
-    vec3 tonemapped = hable_tonemap(max(linear_709, 0.0));
+    vec3 tonemapped = hable_tonemap(max(linear_709, 0.0), peak);
     vec3 sdr = bt709_oetf(tonemapped);
 
     gl_FragColor = vec4(clamp(sdr, 0.0, 1.0), rgba.a);

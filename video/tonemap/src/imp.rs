@@ -76,9 +76,9 @@ pub struct RsTonemap {
 fn detect_hdr_transfer(caps: &gst::Caps) -> Option<Transfer> {
     let caps_str = caps.to_string();
 
-    if caps_str.contains("smpte-st-2084") {
+    if caps_str.contains("bt2100-pq") || caps_str.contains("smpte-st-2084") {
         Some(Transfer::Pq)
-    } else if caps_str.contains("arib-std-b67") {
+    } else if caps_str.contains("bt2100-hlg") || caps_str.contains("arib-std-b67") {
         Some(Transfer::Hlg)
     } else {
         None
@@ -307,8 +307,12 @@ impl BaseTransformImpl for RsTonemap {
 
                 let (r709, g709, b709) = math::bt2020_to_bt709(lr, lg, lb);
 
+                let peak = match transfer {
+                    Transfer::Pq => 11.2,
+                    Transfer::Hlg => 10.0,
+                };
                 let (rt, gt, bt) =
-                    math::hable_tonemap(r709.max(0.0), g709.max(0.0), b709.max(0.0));
+                    math::hable_tonemap(r709.max(0.0), g709.max(0.0), b709.max(0.0), peak);
 
                 let ro = math::bt709_oetf(rt);
                 let go = math::bt709_oetf(gt);

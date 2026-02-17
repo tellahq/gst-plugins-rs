@@ -87,19 +87,20 @@ pub fn pq_eotf(e: f32) -> f32 {
 
 /// HLG (ARIB STD-B67) electro-optical transfer function.
 ///
-/// Inverse of ITU-R BT.2100-2 Table 5 OETF. Converts HLG-encoded signal
-/// `e` ∈ [0, 1] to scene-referred linear light, then scales for 1000-nit
-/// nominal peak (÷100 nits reference = ×10).
+/// Inverse of ITU-R BT.2100-2 Table 5 OETF, followed by OOTF (gamma 1.2)
+/// and scaling by 1000/npl (npl=100 → ×10). Matches zimg's
+/// `pow(inverse_oetf(x), 1.2) * (1000.0 / npl)`.
 #[inline]
 pub fn hlg_eotf(e: f32) -> f32 {
+    // Inverse OETF: E' → scene-linear E ∈ [0, 1]
     let scene = if e <= 0.5 {
         e * e / 3.0
     } else {
-        ((e - HLG_C) / HLG_A).exp() + HLG_B
-    } / 12.0;
+        (((e - HLG_C) / HLG_A).exp() + HLG_B) / 12.0
+    };
 
-    // Scale for 1000-nit display peak, normalized to 100-nit reference
-    scene * 10.0
+    // OOTF (gamma 1.2) + scale by 1000/npl (npl=100 → ×10)
+    scene.powf(1.2) * 10.0
 }
 
 /// Convert linear-light BT.2020 RGB to linear-light BT.709 RGB.
@@ -124,17 +125,23 @@ fn hable_curve(x: f32) -> f32 {
         - HABLE_E / HABLE_F
 }
 
-/// Apply Hable tonemapping to linear-light RGB. Maps HDR range → [0, 1].
-/// Matches FFmpeg `tonemap=hable:desat=0` with W=11.2.
+/// Apply Hable tonemapping to linear-light RGB using max-component approach.
+///
+/// `peak` controls the normalization denominator:
+/// - PQ: `HABLE_W` (11.2)
+/// - HLG: `10.0` (1000 nits / 100 npl, matches FFmpeg's `ff_determine_signal_peak`)
+///
+/// Max-component tonemapping preserves color ratios (no per-channel hue shift).
+/// Matches FFmpeg `tonemap=hable:desat=0`.
 #[inline]
-pub fn hable_tonemap(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
-    let white_scale = 1.0 / hable_curve(HABLE_W);
-
-    (
-        hable_curve(r) * white_scale,
-        hable_curve(g) * white_scale,
-        hable_curve(b) * white_scale,
-    )
+pub fn hable_tonemap(r: f32, g: f32, b: f32, peak: f32) -> (f32, f32, f32) {
+    let sig = r.max(g).max(b);
+    if sig < 1e-6 {
+        return (r, g, b);
+    }
+    let mapped = hable_curve(sig) / hable_curve(peak);
+    let scale = mapped / sig;
+    (r * scale, g * scale, b * scale)
 }
 
 /// BT.709 opto-electronic transfer function (gamma encoding for SDR output).
@@ -197,9 +204,11 @@ mod tests {
 
     #[test]
     fn hlg_eotf_boundary() {
-        // BT.2100-2: at E'=0.5 boundary uses the quadratic branch: E'^2/3 / 12 × 10
+        // BT.2100-2: at E'=0.5, low branch: scene = E'^2/3 = 0.25/3
+        // Then OOTF: pow(scene, 1.2) * 10.0
         let val = hlg_eotf(0.5);
-        let expected = (0.25 / 3.0) / 12.0 * 10.0;
+        let scene = 0.25 / 3.0;
+        let expected = scene.powf(1.2) * 10.0;
         assert!(approx_eq(val, expected, 0.01), "HLG 0.5 expected {expected}, got {val}");
     }
 
@@ -222,8 +231,8 @@ mod tests {
 
     #[test]
     fn hable_tonemap_zero() {
-        // f(0)/f(W) ≈ 0 (Hable curve passes through origin)
-        let (r, g, b) = hable_tonemap(0.0, 0.0, 0.0);
+        // Black maps to black
+        let (r, g, b) = hable_tonemap(0.0, 0.0, 0.0, HABLE_W);
         assert!(approx_eq(r, 0.0, 0.001));
         assert!(approx_eq(g, 0.0, 0.001));
         assert!(approx_eq(b, 0.0, 0.001));
@@ -231,18 +240,26 @@ mod tests {
 
     #[test]
     fn hable_tonemap_white_point() {
-        // By definition: f(W)/f(W) = 1.0 (white point maps to 1.0)
-        let (r, _, _) = hable_tonemap(HABLE_W, 0.0, 0.0);
+        // f(peak)/f(peak) = 1.0 via max-component
+        let (r, _, _) = hable_tonemap(HABLE_W, 0.0, 0.0, HABLE_W);
         assert!(approx_eq(r, 1.0, 0.001), "Hable(W) should be ~1.0, got {r}");
     }
 
     #[test]
     fn hable_tonemap_monotonic() {
-        // Hable curve is monotonically increasing (required for any valid tonemap)
-        let (a, _, _) = hable_tonemap(1.0, 0.0, 0.0);
-        let (b, _, _) = hable_tonemap(5.0, 0.0, 0.0);
-        let (c, _, _) = hable_tonemap(10.0, 0.0, 0.0);
+        // Max-component tonemapping is monotonically increasing
+        let (a, _, _) = hable_tonemap(1.0, 0.0, 0.0, HABLE_W);
+        let (b, _, _) = hable_tonemap(5.0, 0.0, 0.0, HABLE_W);
+        let (c, _, _) = hable_tonemap(10.0, 0.0, 0.0, HABLE_W);
         assert!(a < b && b < c, "Hable should be monotonically increasing");
+    }
+
+    #[test]
+    fn hable_tonemap_preserves_ratios() {
+        // Max-component approach should preserve color ratios
+        let (r, g, b) = hable_tonemap(5.0, 2.5, 1.0, HABLE_W);
+        assert!(approx_eq(r / g, 2.0, 0.01), "R/G ratio should be 2.0");
+        assert!(approx_eq(g / b, 2.5, 0.01), "G/B ratio should be 2.5");
     }
 
     #[test]
