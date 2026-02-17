@@ -41,6 +41,7 @@ precision highp float;
 varying vec2 v_texcoord;
 uniform sampler2D tex;
 uniform int active;
+uniform int transfer; // 0 = PQ (ST 2084), 1 = HLG (ARIB STD-B67)
 
 // PQ (ST 2084) constants
 const float PQ_M1 = 0.1593017578125;
@@ -49,10 +50,15 @@ const float PQ_C1 = 0.8359375;
 const float PQ_C2 = 18.8515625;
 const float PQ_C3 = 18.6875;
 
+// HLG (ARIB STD-B67) constants — ITU-R BT.2100-2 Table 5
+const float HLG_A = 0.17883277;
+const float HLG_B = 0.28466892;
+const float HLG_C = 0.55991073;
+
 // Hable constants
 const float HABLE_A = 0.15;
 const float HABLE_B = 0.50;
-const float HABLE_C = 0.10;
+const float HABLE_C_TM = 0.10;
 const float HABLE_D = 0.20;
 const float HABLE_E = 0.02;
 const float HABLE_F = 0.30;
@@ -72,8 +78,25 @@ vec3 pq_eotf(vec3 e) {
     return 10000.0 * pow(num / den, vec3(1.0 / PQ_M1)) / 100.0;
 }
 
+float hlg_oetf_inv(float e) {
+    if (e <= 0.5) {
+        return e * e / 3.0;
+    } else {
+        return exp((e - HLG_C) / HLG_A) + HLG_B;
+    }
+}
+
+vec3 hlg_eotf(vec3 e) {
+    // Inverse OETF → scene-linear, then scale for 1000-nit peak / 100-nit ref
+    return vec3(
+        hlg_oetf_inv(e.r),
+        hlg_oetf_inv(e.g),
+        hlg_oetf_inv(e.b)
+    ) / 12.0 * 10.0;
+}
+
 float hable_curve(float x) {
-    return ((x * (HABLE_A * x + HABLE_C * HABLE_B) + HABLE_D * HABLE_E)
+    return ((x * (HABLE_A * x + HABLE_C_TM * HABLE_B) + HABLE_D * HABLE_E)
           / (x * (HABLE_A * x + HABLE_B) + HABLE_D * HABLE_F))
           - HABLE_E / HABLE_F;
 }
@@ -103,9 +126,15 @@ void main() {
         return;
     }
 
-    vec3 linear = pq_eotf(rgba.rgb);
-    // Skip BT.2020→BT.709 primaries — glcolorconvert already did it
-    vec3 tonemapped = hable_tonemap(max(linear, 0.0));
+    vec3 linear_hdr;
+    if (transfer == 1) {
+        linear_hdr = hlg_eotf(rgba.rgb);
+    } else {
+        linear_hdr = pq_eotf(rgba.rgb);
+    }
+
+    vec3 linear_709 = BT2020_TO_BT709 * linear_hdr;
+    vec3 tonemapped = hable_tonemap(max(linear_709, 0.0));
     vec3 sdr = bt709_oetf(tonemapped);
 
     gl_FragColor = vec4(clamp(sdr, 0.0, 1.0), rgba.a);
@@ -129,6 +158,7 @@ struct GlState {
     vbo: gl::types::GLuint,
     fbo: gl::types::GLuint,
     active_loc: gl::types::GLint,
+    transfer_loc: gl::types::GLint,
     tex_loc: gl::types::GLint,
 }
 
@@ -147,15 +177,26 @@ impl Drop for GlState {
     }
 }
 
+/// HDR transfer function. 0 = PQ (ST 2084), 1 = HLG (ARIB STD-B67).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(i32)]
+enum Transfer {
+    #[default]
+    Pq = 0,
+    Hlg = 1,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Settings {
     force_active: bool,
+    transfer: Transfer,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Settings {
             force_active: false,
+            transfer: Transfer::default(),
         }
     }
 }
@@ -165,11 +206,18 @@ pub struct RsTonemapGL {
     settings: Mutex<Settings>,
     gl_state: Mutex<Option<GlState>>,
     active: Mutex<bool>,
+    transfer: Mutex<Transfer>,
 }
 
-fn detect_hdr_transfer(caps: &gst::Caps) -> bool {
+fn detect_hdr_transfer(caps: &gst::Caps) -> Option<Transfer> {
     let caps_str = caps.to_string();
-    caps_str.contains("smpte-st-2084") || caps_str.contains("arib-std-b67")
+    if caps_str.contains("arib-std-b67") {
+        Some(Transfer::Hlg)
+    } else if caps_str.contains("smpte-st-2084") {
+        Some(Transfer::Pq)
+    } else {
+        None
+    }
 }
 
 fn compile_shader(kind: gl::types::GLenum, source: &str) -> Result<gl::types::GLuint, String> {
@@ -204,12 +252,22 @@ impl ObjectSubclass for RsTonemapGL {
 impl ObjectImpl for RsTonemapGL {
     fn properties() -> &'static [glib::ParamSpec] {
         static PROPERTIES: LazyLock<Vec<glib::ParamSpec>> = LazyLock::new(|| {
-            vec![glib::ParamSpecBoolean::builder("force-active")
-                .nick("Force active")
-                .blurb("Force tonemapping active even if colorimetry is not HDR")
-                .default_value(false)
-                .mutable_playing()
-                .build()]
+            vec![
+                glib::ParamSpecBoolean::builder("force-active")
+                    .nick("Force active")
+                    .blurb("Force tonemapping active even if colorimetry is not HDR")
+                    .default_value(false)
+                    .mutable_playing()
+                    .build(),
+                glib::ParamSpecInt::builder("transfer")
+                    .nick("Transfer function")
+                    .blurb("HDR transfer function: 0 = PQ (ST 2084), 1 = HLG (ARIB STD-B67)")
+                    .minimum(0)
+                    .maximum(1)
+                    .default_value(0)
+                    .mutable_playing()
+                    .build(),
+            ]
         });
 
         PROPERTIES.as_ref()
@@ -221,6 +279,11 @@ impl ObjectImpl for RsTonemapGL {
                 let mut settings = self.settings.lock().unwrap();
                 settings.force_active = value.get().expect("type checked upstream");
             }
+            "transfer" => {
+                let v: i32 = value.get().expect("type checked upstream");
+                let t = if v == 1 { Transfer::Hlg } else { Transfer::Pq };
+                self.settings.lock().unwrap().transfer = t;
+            }
             _ => unimplemented!(),
         }
     }
@@ -228,6 +291,7 @@ impl ObjectImpl for RsTonemapGL {
     fn property(&self, _id: usize, pspec: &glib::ParamSpec) -> glib::Value {
         match pspec.name() {
             "force-active" => self.settings.lock().unwrap().force_active.to_value(),
+            "transfer" => (self.settings.lock().unwrap().transfer as i32).to_value(),
             _ => unimplemented!(),
         }
     }
@@ -263,20 +327,23 @@ impl GLBaseFilterImpl for RsTonemapGL {
         incaps: &gst::Caps,
         outcaps: &gst::Caps,
     ) -> Result<(), gst::LoggableError> {
-        let force = self.settings.lock().unwrap().force_active;
-        let hdr = detect_hdr_transfer(incaps);
-        let active = hdr || force;
+        let settings = *self.settings.lock().unwrap();
+        let detected = detect_hdr_transfer(incaps);
+        let active = detected.is_some() || settings.force_active;
+        let transfer = detected.unwrap_or(settings.transfer);
 
         gst::info!(
             CAT,
             imp = self,
-            "GL tonemapping {}: hdr={}, force={}",
+            "GL tonemapping {}: detected={:?}, force={}, transfer={:?}",
             if active { "active" } else { "passthrough" },
-            hdr,
-            force,
+            detected,
+            settings.force_active,
+            transfer,
         );
 
         *self.active.lock().unwrap() = active;
+        *self.transfer.lock().unwrap() = transfer;
 
         self.parent_gl_set_caps(incaps, outcaps)
     }
@@ -295,6 +362,7 @@ impl GLBaseFilterImpl for RsTonemapGL {
         let program;
         let tex_loc;
         let active_loc;
+        let transfer_loc;
         let mut vao = 0;
         let mut vbo = 0;
         let mut fbo = 0;
@@ -320,6 +388,7 @@ impl GLBaseFilterImpl for RsTonemapGL {
 
             tex_loc = gl::GetUniformLocation(program, b"tex\0".as_ptr() as _);
             active_loc = gl::GetUniformLocation(program, b"active\0".as_ptr() as _);
+            transfer_loc = gl::GetUniformLocation(program, b"transfer\0".as_ptr() as _);
 
             // Fullscreen quad: position (x,y) + texcoord (s,t)
             #[rustfmt::skip]
@@ -366,6 +435,7 @@ impl GLBaseFilterImpl for RsTonemapGL {
             vbo,
             fbo,
             active_loc,
+            transfer_loc,
             tex_loc,
         });
 
@@ -426,6 +496,8 @@ impl GLFilterImpl for RsTonemapGL {
             gl::BindTexture(gl::TEXTURE_2D, in_tex);
             gl::Uniform1i(gl.tex_loc, 0);
             gl::Uniform1i(gl.active_loc, active as _);
+            let transfer = *self.transfer.lock().unwrap();
+            gl::Uniform1i(gl.transfer_loc, transfer as i32);
 
             // Draw fullscreen quad
             gl::BindVertexArray(gl.vao);
