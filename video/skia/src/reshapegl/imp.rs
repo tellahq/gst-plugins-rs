@@ -122,10 +122,23 @@ impl SkiaReshapeGL {
             return Err(gst::loggable_error!(CAT, "Input image is invalid"));
         }
 
-        // Skia GPU surfaces always produce premultiplied alpha, but GStreamer's
-        // only works with unpremultiplied alpha. Wrap the render
-        // in a save_layer with a SkSL unpremultiply ImageFilter + BlendMode::Src
-        // so the layer restore writes straight-alpha values to the output texture.
+        // Draw everything normally so that canvas.surface().image_snapshot()
+        // (used by the draw-signal snapshot provider) captures the current frame.
+        {
+            let canvas = out_surface.canvas();
+
+            self.reshape(buffer, video_info, canvas, &image, Some(skia_context))
+                .map_err(|e| gst::loggable_error!(CAT, "Failed to reshape: {}", e))?;
+        }
+
+        // Flush to commit all GPU drawing to the surface before snapshotting.
+        skia_context.flush_and_submit();
+
+        // Skia GPU surfaces produce premultiplied alpha, but GStreamer
+        // expects straight (unpremultiplied) alpha. Apply conversion as a
+        // post-processing pass now that all drawing is done.
+        let rendered = out_surface.image_snapshot();
+
         let unpremul_effect = skia::RuntimeEffect::make_for_shader(
             "uniform shader child; \
              half4 main(float2 coord) { \
@@ -143,17 +156,14 @@ impl SkiaReshapeGL {
                 gst::loggable_error!(CAT, "Failed to create unpremultiply image filter")
             })?;
 
-        let mut layer_paint = skia::Paint::default();
-        layer_paint.set_blend_mode(skia::BlendMode::Src);
-        layer_paint.set_image_filter(unpremul_filter);
-
         let canvas = out_surface.canvas();
-        canvas.save_layer(&skia::canvas::SaveLayerRec::default().paint(&layer_paint));
+        canvas.clear(skia::Color::TRANSPARENT);
 
-        self.reshape(buffer, video_info, canvas, &image, Some(skia_context))
-            .map_err(|e| gst::loggable_error!(CAT, "Failed to reshape: {}", e))?;
+        let mut unpremul_paint = skia::Paint::default();
+        unpremul_paint.set_blend_mode(skia::BlendMode::Src);
+        unpremul_paint.set_image_filter(unpremul_filter);
+        canvas.draw_image(&rendered, (0, 0), Some(&unpremul_paint));
 
-        canvas.restore();
         skia_context.flush_and_submit();
 
         Ok(())
