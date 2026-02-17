@@ -3343,6 +3343,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "gst-plugin-tonemap"
+version = "0.14.0-alpha.1"
+dependencies = [
+ "gst-plugin-version-helper",
+ "gstreamer",
+ "gstreamer-base",
+ "gstreamer-check",
+ "gstreamer-video",
+]
+
+[[package]]
 name = "gst-plugin-tracers"
 version = "0.14.0-alpha.1"
 dependencies = [

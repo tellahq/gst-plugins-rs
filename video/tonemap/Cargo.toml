@@ -17,7 +17,7 @@ gst-video = { workspace = true, features = ["v1_16"] }
 gst-check.workspace = true
 
 [lib]
-name = "gsttonemap"
+name = "gstrstonemap"
 crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
 

@@ -236,6 +236,9 @@ plugins = {
     'library': 'libgstskia',
     'features': skia_features,
   },
+  'tonemap': {
+    'library': 'libgstrstonemap',
+  },
   'validate': {
     'library': 'libgstrsvalidate',
     'validate': true

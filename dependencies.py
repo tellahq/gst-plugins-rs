@@ -37,6 +37,7 @@ RENAMES = {
     'rsclosedcaption': 'closedcaption',
     'rswebrtc': 'webrtc',
     'rspng': 'png',
+    'rstonemap': 'tonemap',
     'rsvideofx': 'videofx',
     'rsvideoconvert': 'videoconvert',
     'rsinter': 'inter',

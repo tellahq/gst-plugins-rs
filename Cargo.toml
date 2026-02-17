@@ -67,6 +67,7 @@ members = [
     "video/videoconvert/videoconverter",
     "video/rav1e",
     "video/skia",
+    "video/tonemap",
     "video/videofx",
     "video/vvdec",
     "video/webp",
@@ -126,6 +127,7 @@ default-members = [
     "video/videoconvert/videoconverter",
     "video/rav1e",
     "video/skia",
+    "video/tonemap",
 ]
 
 [profile.release]
