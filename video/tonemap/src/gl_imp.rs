@@ -105,11 +105,12 @@ float hable_curve(float x) {
 }
 
 vec3 hable_tonemap(vec3 c, float peak) {
-    // Max-component tonemapping (preserves color ratios)
-    float sig = max(max(c.r, c.g), c.b);
-    float sig_old = sig;
-    sig = hable_curve(sig) / hable_curve(peak);
-    return (sig_old > 1e-6) ? c * (sig / sig_old) : c;
+    // Luma-based tonemapping: tonemap the luminance, scale RGB proportionally
+    // BT.709 luma coefficients
+    float luma = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+    float luma_old = luma;
+    luma = hable_curve(luma) / hable_curve(peak);
+    return (luma_old > 1e-6) ? c * (luma / luma_old) : c;
 }
 
 vec3 bt709_oetf(vec3 l) {
