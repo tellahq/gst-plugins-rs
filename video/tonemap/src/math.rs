@@ -87,9 +87,8 @@ pub fn pq_eotf(e: f32) -> f32 {
 
 /// HLG (ARIB STD-B67) electro-optical transfer function.
 ///
-/// Inverse of ITU-R BT.2100-2 Table 5 OETF, followed by OOTF (gamma 1.2)
-/// and scaling by 1000/npl (npl=100 → ×10). Matches zimg's
-/// `pow(inverse_oetf(x), 1.2) * (1000.0 / npl)`.
+/// Inverse of ITU-R BT.2100-2 Table 5 OETF, scaled by 1000/npl (npl=100 → ×10).
+/// Scene-referred: no OOTF gamma (matches zimg `allow_approximate_gamma=1` path).
 #[inline]
 pub fn hlg_eotf(e: f32) -> f32 {
     // Inverse OETF: E' → scene-linear E ∈ [0, 1]
@@ -99,8 +98,8 @@ pub fn hlg_eotf(e: f32) -> f32 {
         (((e - HLG_C) / HLG_A).exp() + HLG_B) / 12.0
     };
 
-    // OOTF (gamma 1.2) + scale by 1000/npl (npl=100 → ×10)
-    scene.powf(1.2) * 10.0
+    // Scale by 1000/npl (npl=100 → ×10), no OOTF (scene-referred, gamma ≈ 1.0)
+    scene * 10.0
 }
 
 /// Convert linear-light BT.2020 RGB to linear-light BT.709 RGB.
@@ -129,10 +128,10 @@ fn hable_curve(x: f32) -> f32 {
 ///
 /// `peak` controls the normalization denominator:
 /// - PQ: `HABLE_W` (11.2)
-/// - HLG: `10.0` (1000 nits / 100 npl, matches FFmpeg's `ff_determine_signal_peak`)
+/// - HLG: `12.0` (effective peak after scene-referred linearization)
 ///
 /// Max-component tonemapping preserves color ratios (no per-channel hue shift).
-/// Matches FFmpeg `tonemap=hable:desat=0`.
+/// 6% desaturation compensates for zimg/FFmpeg scene-referred gamma interaction.
 #[inline]
 pub fn hable_tonemap(r: f32, g: f32, b: f32, peak: f32) -> (f32, f32, f32) {
     let sig = r.max(g).max(b);
@@ -141,7 +140,16 @@ pub fn hable_tonemap(r: f32, g: f32, b: f32, peak: f32) -> (f32, f32, f32) {
     }
     let mapped = hable_curve(sig) / hable_curve(peak);
     let scale = mapped / sig;
-    (r * scale, g * scale, b * scale)
+    let (mr, mg, mb) = (r * scale, g * scale, b * scale);
+
+    // 6% desaturation toward BT.709 luma
+    let luma = 0.2126 * mr + 0.7152 * mg + 0.0722 * mb;
+    let desat = 0.06;
+    (
+        mr + desat * (luma - mr),
+        mg + desat * (luma - mg),
+        mb + desat * (luma - mb),
+    )
 }
 
 /// BT.709 opto-electronic transfer function (gamma encoding for SDR output).
@@ -197,18 +205,18 @@ mod tests {
 
     #[test]
     fn hlg_eotf_peak() {
-        // BT.2100-2 Table 5 inverse: E'=1 → scene≈0.83 → ×10 ≈ 8.3
+        // Scene-referred: inverse_oetf(1.0) = 1.0, × 10 = 10.0
         let val = hlg_eotf(1.0);
-        assert!(val > 5.0 && val < 15.0, "HLG 1.0 should be ~10, got {val}");
+        assert!(approx_eq(val, 10.0, 0.1), "HLG 1.0 should be 10.0, got {val}");
     }
 
     #[test]
     fn hlg_eotf_boundary() {
-        // BT.2100-2: at E'=0.5, low branch: scene = E'^2/3 = 0.25/3
-        // Then OOTF: pow(scene, 1.2) * 10.0
+        // At E'=0.5, low branch: scene = E'^2/3 = 0.25/3
+        // No OOTF: scene * 10.0
         let val = hlg_eotf(0.5);
         let scene = 0.25 / 3.0;
-        let expected = scene.powf(1.2) * 10.0;
+        let expected = scene * 10.0;
         assert!(approx_eq(val, expected, 0.01), "HLG 0.5 expected {expected}, got {val}");
     }
 
@@ -240,9 +248,10 @@ mod tests {
 
     #[test]
     fn hable_tonemap_white_point() {
-        // f(peak)/f(peak) = 1.0 via max-component
+        // For single-channel input, max-component gives ~1.0 before desaturation
+        // After 6% desat toward luma, result is still close to 1.0
         let (r, _, _) = hable_tonemap(HABLE_W, 0.0, 0.0, HABLE_W);
-        assert!(approx_eq(r, 1.0, 0.001), "Hable(W) should be ~1.0, got {r}");
+        assert!(approx_eq(r, 1.0, 0.07), "Hable(W) should be ~1.0, got {r}");
     }
 
     #[test]
@@ -255,11 +264,12 @@ mod tests {
     }
 
     #[test]
-    fn hable_tonemap_preserves_ratios() {
-        // Max-component approach should preserve color ratios
+    fn hable_tonemap_approximately_preserves_ratios() {
+        // Max-component preserves ratios before desaturation.
+        // After 6% desaturation, ratios shift slightly toward neutral.
         let (r, g, b) = hable_tonemap(5.0, 2.5, 1.0, HABLE_W);
-        assert!(approx_eq(r / g, 2.0, 0.01), "R/G ratio should be 2.0");
-        assert!(approx_eq(g / b, 2.5, 0.01), "G/B ratio should be 2.5");
+        assert!(approx_eq(r / g, 2.0, 0.1), "R/G ratio should be ~2.0, got {}", r / g);
+        assert!(approx_eq(g / b, 2.5, 0.2), "G/B ratio should be ~2.5, got {}", g / b);
     }
 
     #[test]

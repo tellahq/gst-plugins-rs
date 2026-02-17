@@ -93,9 +93,8 @@ vec3 hlg_eotf(vec3 e) {
         hlg_oetf_inv(e.g),
         hlg_oetf_inv(e.b)
     );
-    // zimg scene-referred: to_linear_scale = 12.0 (no OOTF)
-    // Matches FFmpeg zscale=t=linear:npl=100 with allow_approximate_gamma=1
-    return scene * 12.0;
+    // Scale: 1000/npl (npl=100 → ×10), no OOTF (scene-referred, gamma ≈ 1.0)
+    return scene * 10.0;
 }
 
 float hable_curve(float x) {
@@ -106,11 +105,15 @@ float hable_curve(float x) {
 
 vec3 hable_tonemap(vec3 c, float peak) {
     // Max-component tonemapping (preserves color ratios)
-    // Matches FFmpeg tonemap=hable:desat=0
     float sig = max(max(c.r, c.g), c.b);
     float sig_old = sig;
     sig = hable_curve(sig) / hable_curve(peak);
-    return (sig_old > 1e-6) ? c * (sig / sig_old) : c;
+    vec3 mapped = (sig_old > 1e-6) ? c * (sig / sig_old) : c;
+
+    // Mild desaturation (6%) to compensate for zimg/FFmpeg scene-referred
+    // gamma interaction not fully modeled here
+    float luma = 0.2126 * mapped.r + 0.7152 * mapped.g + 0.0722 * mapped.b;
+    return mix(mapped, vec3(luma), 0.06);
 }
 
 vec3 bt709_oetf(vec3 l) {
@@ -133,7 +136,7 @@ void main() {
     float peak;
     if (transfer == 1) {
         linear_hdr = hlg_eotf(rgba.rgb);
-        peak = 10.0;  // FFmpeg ff_determine_signal_peak: 1000/npl = 1000/100 = 10.0
+        peak = 12.0;  // HLG effective peak after zimg scene-referred linearization
     } else {
         linear_hdr = pq_eotf(rgba.rgb);
         peak = HABLE_W; // 11.2
