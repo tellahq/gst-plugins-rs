@@ -211,9 +211,9 @@ pub struct RsTonemapGL {
 
 fn detect_hdr_transfer(caps: &gst::Caps) -> Option<Transfer> {
     let caps_str = caps.to_string();
-    if caps_str.contains("arib-std-b67") {
+    if caps_str.contains("bt2100-hlg") || caps_str.contains("arib-std-b67") {
         Some(Transfer::Hlg)
-    } else if caps_str.contains("smpte-st-2084") {
+    } else if caps_str.contains("bt2100-pq") || caps_str.contains("smpte-st-2084") {
         Some(Transfer::Pq)
     } else {
         None
