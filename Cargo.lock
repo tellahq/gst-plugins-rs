@@ -3346,10 +3346,12 @@ dependencies = [
 name = "gst-plugin-tonemap"
 version = "0.14.0-alpha.1"
 dependencies = [
+ "gl",
  "gst-plugin-version-helper",
  "gstreamer",
  "gstreamer-base",
  "gstreamer-check",
+ "gstreamer-gl",
  "gstreamer-video",
 ]
 

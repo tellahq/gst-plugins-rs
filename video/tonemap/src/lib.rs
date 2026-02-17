@@ -15,11 +15,16 @@
 use gst::glib;
 use gst::prelude::StaticType;
 
+mod gl_imp;
 mod imp;
 mod math;
 
 glib::wrapper! {
     pub struct RsTonemap(ObjectSubclass<imp::RsTonemap>) @extends gst_base::BaseTransform, gst::Element, gst::Object;
+}
+
+glib::wrapper! {
+    pub struct RsTonemapGL(ObjectSubclass<gl_imp::RsTonemapGL>) @extends gst_gl::GLFilter, gst_gl::GLBaseFilter, gst_base::BaseTransform, gst::Element, gst::Object;
 }
 
 fn plugin_init(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
@@ -28,6 +33,12 @@ fn plugin_init(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
         "rstonemap",
         gst::Rank::NONE,
         RsTonemap::static_type(),
+    )?;
+    gst::Element::register(
+        Some(plugin),
+        "rstonemapgl",
+        gst::Rank::NONE,
+        RsTonemapGL::static_type(),
     )
 }
 
