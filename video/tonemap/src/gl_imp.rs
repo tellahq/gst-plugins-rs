@@ -93,9 +93,9 @@ vec3 hlg_eotf(vec3 e) {
         hlg_oetf_inv(e.g),
         hlg_oetf_inv(e.b)
     );
-    // OOTF (gamma 1.2) + scale by 1000/npl (npl=100 → *10)
-    // Matches zimg: pow(inverse_oetf(x), 1.2) * (1000.0 / npl)
-    return pow(scene, vec3(1.2)) * 10.0;
+    // Scale by 1000/npl (npl=100 → *10)
+    // No OOTF gamma: npl=100 means SDR reference display, system gamma ≈ 1.0
+    return scene * 10.0;
 }
 
 float hable_curve(float x) {
