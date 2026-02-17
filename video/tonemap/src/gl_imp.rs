@@ -105,12 +105,13 @@ float hable_curve(float x) {
 }
 
 vec3 hable_tonemap(vec3 c, float peak) {
-    // Max-component tonemapping (preserves color ratios, matches FFmpeg)
-    float sig = max(max(c.r, c.g), c.b);
-    float sig_old = sig;
-    sig = hable_curve(sig) / hable_curve(peak);
-    // Scale all channels uniformly
-    return (sig_old > 1e-6) ? c * (sig / sig_old) : c;
+    // Per-channel Hable tonemapping
+    float white_scale = 1.0 / hable_curve(peak);
+    return vec3(
+        hable_curve(c.r) * white_scale,
+        hable_curve(c.g) * white_scale,
+        hable_curve(c.b) * white_scale
+    );
 }
 
 vec3 bt709_oetf(vec3 l) {
