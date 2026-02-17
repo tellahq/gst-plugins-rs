@@ -105,13 +105,11 @@ float hable_curve(float x) {
 }
 
 vec3 hable_tonemap(vec3 c, float peak) {
-    // Per-channel Hable tonemapping
-    float white_scale = 1.0 / hable_curve(peak);
-    return vec3(
-        hable_curve(c.r) * white_scale,
-        hable_curve(c.g) * white_scale,
-        hable_curve(c.b) * white_scale
-    );
+    // Max-component tonemapping (preserves color ratios)
+    float sig = max(max(c.r, c.g), c.b);
+    float sig_old = sig;
+    sig = hable_curve(sig) / hable_curve(peak);
+    return (sig_old > 1e-6) ? c * (sig / sig_old) : c;
 }
 
 vec3 bt709_oetf(vec3 l) {
@@ -134,7 +132,7 @@ void main() {
     float peak;
     if (transfer == 1) {
         linear_hdr = hlg_eotf(rgba.rgb);
-        peak = 12.0;  // FFmpeg ff_determine_signal_peak returns 12 for HLG
+        peak = HABLE_W; // 11.2 — same white point as PQ path
     } else {
         linear_hdr = pq_eotf(rgba.rgb);
         peak = HABLE_W; // 11.2
