@@ -105,12 +105,16 @@ float hable_curve(float x) {
 }
 
 vec3 hable_tonemap(vec3 c, float peak) {
-    // Luma-based tonemapping: tonemap the luminance, scale RGB proportionally
-    // BT.709 luma coefficients
-    float luma = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
-    float luma_old = luma;
-    luma = hable_curve(luma) / hable_curve(peak);
-    return (luma_old > 1e-6) ? c * (luma / luma_old) : c;
+    // Max-component tonemapping (preserves color ratios)
+    float sig = max(max(c.r, c.g), c.b);
+    float sig_old = sig;
+    sig = hable_curve(sig) / hable_curve(peak);
+    vec3 mapped = (sig_old > 1e-6) ? c * (sig / sig_old) : c;
+
+    // Mild desaturation toward BT.709 luma to match FFmpeg output
+    float luma = 0.2126 * mapped.r + 0.7152 * mapped.g + 0.0722 * mapped.b;
+    float desat = 0.06;
+    return mix(mapped, vec3(luma), desat);
 }
 
 vec3 bt709_oetf(vec3 l) {
@@ -133,7 +137,7 @@ void main() {
     float peak;
     if (transfer == 1) {
         linear_hdr = hlg_eotf(rgba.rgb);
-        peak = HABLE_W; // 11.2 — same white point as PQ path
+        peak = 12.0;  // FFmpeg ff_determine_signal_peak returns 12 for HLG
     } else {
         linear_hdr = pq_eotf(rgba.rgb);
         peak = HABLE_W; // 11.2
