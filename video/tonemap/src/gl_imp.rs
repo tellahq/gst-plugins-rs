@@ -133,7 +133,7 @@ void main() {
     float peak;
     if (transfer == 1) {
         linear_hdr = hlg_eotf(rgba.rgb);
-        peak = 10.0;  // 1000 nits / 100 npl — matches zimg/FFmpeg for HLG
+        peak = 12.0;  // FFmpeg ff_determine_signal_peak returns 12 for HLG
     } else {
         linear_hdr = pq_eotf(rgba.rgb);
         peak = HABLE_W; // 11.2
