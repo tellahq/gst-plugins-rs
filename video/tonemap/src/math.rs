@@ -87,8 +87,9 @@ pub fn pq_eotf(e: f32) -> f32 {
 
 /// HLG (ARIB STD-B67) electro-optical transfer function.
 ///
-/// Inverse of ITU-R BT.2100-2 Table 5 OETF, scaled by 1000/npl (npl=100 → ×10).
-/// Scene-referred: no OOTF gamma (matches zimg `allow_approximate_gamma=1` path).
+/// Inverse of ITU-R BT.2100-2 Table 5 OETF, followed by OOTF (gamma 1.2)
+/// and scaling by 1000/npl (npl=100 → ×10). Matches zimg with
+/// `allow_approximate_gamma=1` (display-referred).
 #[inline]
 pub fn hlg_eotf(e: f32) -> f32 {
     // Inverse OETF: E' → scene-linear E ∈ [0, 1]
@@ -98,8 +99,8 @@ pub fn hlg_eotf(e: f32) -> f32 {
         (((e - HLG_C) / HLG_A).exp() + HLG_B) / 12.0
     };
 
-    // Scale by 1000/npl (npl=100 → ×10), no OOTF (scene-referred, gamma ≈ 1.0)
-    scene * 10.0
+    // OOTF (gamma 1.2) + scale by 1000/npl (npl=100 → ×10)
+    scene.powf(1.2) * 10.0
 }
 
 /// Convert linear-light BT.2020 RGB to linear-light BT.709 RGB.
@@ -128,10 +129,10 @@ fn hable_curve(x: f32) -> f32 {
 ///
 /// `peak` controls the normalization denominator:
 /// - PQ: `HABLE_W` (11.2)
-/// - HLG: `12.0` (effective peak after scene-referred linearization)
+/// - HLG: `10.0` (1000 nits / npl=100, from ff_determine_signal_peak)
 ///
 /// Max-component tonemapping preserves color ratios (no per-channel hue shift).
-/// 6% desaturation compensates for zimg/FFmpeg scene-referred gamma interaction.
+/// Matches FFmpeg `tonemap=hable:desat=0`.
 #[inline]
 pub fn hable_tonemap(r: f32, g: f32, b: f32, peak: f32) -> (f32, f32, f32) {
     let sig = r.max(g).max(b);
@@ -140,28 +141,16 @@ pub fn hable_tonemap(r: f32, g: f32, b: f32, peak: f32) -> (f32, f32, f32) {
     }
     let mapped = hable_curve(sig) / hable_curve(peak);
     let scale = mapped / sig;
-    let (mr, mg, mb) = (r * scale, g * scale, b * scale);
-
-    // 6% desaturation toward BT.709 luma
-    let luma = 0.2126 * mr + 0.7152 * mg + 0.0722 * mb;
-    let desat = 0.06;
-    (
-        mr + desat * (luma - mr),
-        mg + desat * (luma - mg),
-        mb + desat * (luma - mb),
-    )
+    (r * scale, g * scale, b * scale)
 }
 
-/// BT.709 opto-electronic transfer function (gamma encoding for SDR output).
+/// Gamma encoding for SDR output — pure power 1/2.4.
 ///
-/// ITU-R BT.709-6 Item 1.2. Matches FFmpeg `zscale=t=bt709`.
+/// Matches zimg `allow_approximate_gamma=1` (used by FFmpeg's zscale defaults).
+/// This is the BT.1886 inverse (gamma 2.4) rather than the BT.709 piecewise OETF.
 #[inline]
 pub fn bt709_oetf(l: f32) -> f32 {
-    if l < 0.018 {
-        4.5 * l
-    } else {
-        1.099 * l.powf(0.45) - 0.099
-    }
+    l.max(0.0).powf(1.0 / 2.4)
 }
 
 #[cfg(test)]
@@ -205,7 +194,7 @@ mod tests {
 
     #[test]
     fn hlg_eotf_peak() {
-        // Scene-referred: inverse_oetf(1.0) = 1.0, × 10 = 10.0
+        // inverse_oetf(1.0) = 1.0, OOTF: 1.0^1.2 = 1.0, × 10 = 10.0
         let val = hlg_eotf(1.0);
         assert!(approx_eq(val, 10.0, 0.1), "HLG 1.0 should be 10.0, got {val}");
     }
@@ -213,10 +202,10 @@ mod tests {
     #[test]
     fn hlg_eotf_boundary() {
         // At E'=0.5, low branch: scene = E'^2/3 = 0.25/3
-        // No OOTF: scene * 10.0
+        // OOTF: pow(scene, 1.2) * 10.0
         let val = hlg_eotf(0.5);
         let scene = 0.25 / 3.0;
-        let expected = scene * 10.0;
+        let expected = scene.powf(1.2) * 10.0;
         assert!(approx_eq(val, expected, 0.01), "HLG 0.5 expected {expected}, got {val}");
     }
 
@@ -248,10 +237,9 @@ mod tests {
 
     #[test]
     fn hable_tonemap_white_point() {
-        // For single-channel input, max-component gives ~1.0 before desaturation
-        // After 6% desat toward luma, result is still close to 1.0
+        // f(peak)/f(peak) = 1.0 via max-component
         let (r, _, _) = hable_tonemap(HABLE_W, 0.0, 0.0, HABLE_W);
-        assert!(approx_eq(r, 1.0, 0.07), "Hable(W) should be ~1.0, got {r}");
+        assert!(approx_eq(r, 1.0, 0.001), "Hable(W) should be ~1.0, got {r}");
     }
 
     #[test]
@@ -264,35 +252,29 @@ mod tests {
     }
 
     #[test]
-    fn hable_tonemap_approximately_preserves_ratios() {
-        // Max-component preserves ratios before desaturation.
-        // After 6% desaturation, ratios shift slightly toward neutral.
+    fn hable_tonemap_preserves_ratios() {
+        // Max-component approach should preserve color ratios
         let (r, g, b) = hable_tonemap(5.0, 2.5, 1.0, HABLE_W);
-        assert!(approx_eq(r / g, 2.0, 0.1), "R/G ratio should be ~2.0, got {}", r / g);
-        assert!(approx_eq(g / b, 2.5, 0.2), "G/B ratio should be ~2.5, got {}", g / b);
+        assert!(approx_eq(r / g, 2.0, 0.01), "R/G ratio should be 2.0");
+        assert!(approx_eq(g / b, 2.5, 0.01), "G/B ratio should be 2.5");
     }
 
     #[test]
     fn bt709_oetf_zero() {
-        // BT.709-6 Item 1.2: L=0 → V=0
         assert_eq!(bt709_oetf(0.0), 0.0);
     }
 
     #[test]
     fn bt709_oetf_one() {
-        // BT.709-6 Item 1.2: L=1 → V = 1.099*1^0.45 - 0.099 = 1.0
+        // 1.0^(1/2.4) = 1.0
         assert!(approx_eq(bt709_oetf(1.0), 1.0, 0.001));
     }
 
     #[test]
-    fn bt709_oetf_boundary() {
-        // BT.709-6: linear segment V = 4.5*L for L < 0.018
-        let below = bt709_oetf(0.01);
-        assert!(approx_eq(below, 0.045, 0.001));
-
-        // BT.709-6: both formulas meet at L=0.018
-        let at_linear = 4.5 * 0.018;
-        let at_gamma = 1.099 * 0.018_f32.powf(0.45) - 0.099;
-        assert!(approx_eq(at_linear, at_gamma, 0.01));
+    fn bt709_oetf_mid() {
+        // Pure power: 0.5^(1/2.4) ≈ 0.7297
+        let val = bt709_oetf(0.5);
+        let expected = 0.5_f32.powf(1.0 / 2.4);
+        assert!(approx_eq(val, expected, 0.001), "expected {expected}, got {val}");
     }
 }

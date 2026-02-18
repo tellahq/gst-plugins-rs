@@ -309,7 +309,7 @@ impl BaseTransformImpl for RsTonemap {
 
                 let peak = match transfer {
                     Transfer::Pq => 11.2,
-                    Transfer::Hlg => 12.0,
+                    Transfer::Hlg => 10.0,
                 };
                 let (rt, gt, bt) =
                     math::hable_tonemap(r709.max(0.0), g709.max(0.0), b709.max(0.0), peak);
