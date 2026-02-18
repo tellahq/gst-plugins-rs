@@ -38,21 +38,19 @@ static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
     )
 });
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Transfer {
-    Pq,
-    Hlg,
-}
+use super::Transfer;
 
 #[derive(Debug, Clone, Copy)]
 struct Settings {
     force_active: bool,
+    transfer: Transfer,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Settings {
             force_active: false,
+            transfer: Transfer::default(),
         }
     }
 }
@@ -73,18 +71,6 @@ pub struct RsTonemap {
     state: Mutex<Option<State>>,
 }
 
-fn detect_hdr_transfer(caps: &gst::Caps) -> Option<Transfer> {
-    let caps_str = caps.to_string();
-
-    if caps_str.contains("bt2100-pq") || caps_str.contains("smpte-st-2084") {
-        Some(Transfer::Pq)
-    } else if caps_str.contains("bt2100-hlg") || caps_str.contains("arib-std-b67") {
-        Some(Transfer::Hlg)
-    } else {
-        None
-    }
-}
-
 #[glib::object_subclass]
 impl ObjectSubclass for RsTonemap {
     const NAME: &'static str = "GstRsTonemap";
@@ -95,12 +81,19 @@ impl ObjectSubclass for RsTonemap {
 impl ObjectImpl for RsTonemap {
     fn properties() -> &'static [glib::ParamSpec] {
         static PROPERTIES: LazyLock<Vec<glib::ParamSpec>> = LazyLock::new(|| {
-            vec![glib::ParamSpecBoolean::builder("force-active")
-                .nick("Force active")
-                .blurb("Force tonemapping active even if colorimetry is not HDR")
-                .default_value(false)
-                .mutable_playing()
-                .build()]
+            vec![
+                glib::ParamSpecBoolean::builder("force-active")
+                    .nick("Force active")
+                    .blurb("Force tonemapping active even if colorimetry is not HDR")
+                    .default_value(false)
+                    .mutable_playing()
+                    .build(),
+                glib::ParamSpecEnum::builder_with_default::<Transfer>("transfer", Transfer::default())
+                    .nick("Transfer function")
+                    .blurb("HDR transfer function")
+                    .mutable_playing()
+                    .build(),
+            ]
         });
 
         PROPERTIES.as_ref()
@@ -123,6 +116,10 @@ impl ObjectImpl for RsTonemap {
                     self.obj().reconfigure_src();
                 }
             }
+            "transfer" => {
+                let t: Transfer = value.get().expect("type checked upstream");
+                self.settings.lock().unwrap().transfer = t;
+            }
             _ => unimplemented!(),
         }
     }
@@ -133,6 +130,7 @@ impl ObjectImpl for RsTonemap {
                 let settings = self.settings.lock().unwrap();
                 settings.force_active.to_value()
             }
+            "transfer" => self.settings.lock().unwrap().transfer.to_value(),
             _ => unimplemented!(),
         }
     }
@@ -258,10 +256,10 @@ impl BaseTransformImpl for RsTonemap {
             outcaps
         );
 
-        let force_active = self.settings.lock().unwrap().force_active;
-        let hdr_transfer = detect_hdr_transfer(incaps);
-        let active = hdr_transfer.is_some() || force_active;
-        let transfer = hdr_transfer.unwrap_or(Transfer::Pq);
+        let settings = *self.settings.lock().unwrap();
+        let hdr_transfer = super::detect_hdr_transfer(incaps);
+        let active = hdr_transfer.is_some() || settings.force_active;
+        let transfer = hdr_transfer.unwrap_or(settings.transfer);
 
         let format = in_info.format();
         let (bpp, rgb_offsets) = match format {
@@ -279,7 +277,7 @@ impl BaseTransformImpl for RsTonemap {
                 "HDR tonemapping active: transfer={:?}, format={:?}, force={}",
                 transfer,
                 format,
-                force_active
+                settings.force_active
             );
         } else {
             gst::debug!(CAT, imp = self, "SDR content, passthrough mode");

@@ -197,14 +197,7 @@ impl Drop for GlState {
     }
 }
 
-/// HDR transfer function. 0 = PQ (ST 2084), 1 = HLG (ARIB STD-B67).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[repr(i32)]
-enum Transfer {
-    #[default]
-    Pq = 0,
-    Hlg = 1,
-}
+use super::Transfer;
 
 #[derive(Debug, Clone, Copy)]
 struct Settings {
@@ -227,17 +220,6 @@ pub struct RsTonemapGL {
     gl_state: Mutex<Option<GlState>>,
     active: Mutex<bool>,
     transfer: Mutex<Transfer>,
-}
-
-fn detect_hdr_transfer(caps: &gst::Caps) -> Option<Transfer> {
-    let caps_str = caps.to_string();
-    if caps_str.contains("bt2100-hlg") || caps_str.contains("arib-std-b67") {
-        Some(Transfer::Hlg)
-    } else if caps_str.contains("bt2100-pq") || caps_str.contains("smpte-st-2084") {
-        Some(Transfer::Pq)
-    } else {
-        None
-    }
 }
 
 fn compile_shader(kind: gl::types::GLenum, source: &str) -> Result<gl::types::GLuint, String> {
@@ -279,12 +261,9 @@ impl ObjectImpl for RsTonemapGL {
                     .default_value(false)
                     .mutable_playing()
                     .build(),
-                glib::ParamSpecInt::builder("transfer")
+                glib::ParamSpecEnum::builder_with_default::<Transfer>("transfer", Transfer::default())
                     .nick("Transfer function")
-                    .blurb("HDR transfer function: 0 = PQ (ST 2084), 1 = HLG (ARIB STD-B67)")
-                    .minimum(0)
-                    .maximum(1)
-                    .default_value(0)
+                    .blurb("HDR transfer function")
                     .mutable_playing()
                     .build(),
             ]
@@ -300,8 +279,7 @@ impl ObjectImpl for RsTonemapGL {
                 settings.force_active = value.get().expect("type checked upstream");
             }
             "transfer" => {
-                let v: i32 = value.get().expect("type checked upstream");
-                let t = if v == 1 { Transfer::Hlg } else { Transfer::Pq };
+                let t: Transfer = value.get().expect("type checked upstream");
                 self.settings.lock().unwrap().transfer = t;
             }
             _ => unimplemented!(),
@@ -311,7 +289,7 @@ impl ObjectImpl for RsTonemapGL {
     fn property(&self, _id: usize, pspec: &glib::ParamSpec) -> glib::Value {
         match pspec.name() {
             "force-active" => self.settings.lock().unwrap().force_active.to_value(),
-            "transfer" => (self.settings.lock().unwrap().transfer as i32).to_value(),
+            "transfer" => self.settings.lock().unwrap().transfer.to_value(),
             _ => unimplemented!(),
         }
     }
@@ -348,7 +326,7 @@ impl GLBaseFilterImpl for RsTonemapGL {
         outcaps: &gst::Caps,
     ) -> Result<(), gst::LoggableError> {
         let settings = *self.settings.lock().unwrap();
-        let detected = detect_hdr_transfer(incaps);
+        let detected = super::detect_hdr_transfer(incaps);
         let active = detected.is_some() || settings.force_active;
         let transfer = detected.unwrap_or(settings.transfer);
 

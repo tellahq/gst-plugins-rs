@@ -19,6 +19,35 @@ mod gl_imp;
 mod imp;
 mod math;
 
+/// HDR transfer function — shared by both `rstonemap` (CPU) and `rstonemapgl` (GL).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, glib::Enum)]
+#[repr(u32)]
+#[enum_type(name = "GstRsTonemapTransfer")]
+pub enum Transfer {
+    #[default]
+    #[enum_value(name = "PQ (ST 2084)", nick = "pq")]
+    Pq = 0,
+    #[enum_value(name = "HLG (ARIB STD-B67)", nick = "hlg")]
+    Hlg = 1,
+}
+
+/// Detect HDR transfer function from caps colorimetry field.
+pub(crate) fn detect_hdr_transfer(caps: &gst::Caps) -> Option<Transfer> {
+    for i in 0..caps.size() {
+        if let Some(s) = caps.structure(i) {
+            if let Ok(c) = s.get::<String>("colorimetry") {
+                if c.contains("bt2100-hlg") || c.contains("arib-std-b67") {
+                    return Some(Transfer::Hlg);
+                }
+                if c.contains("bt2100-pq") || c.contains("smpte-st-2084") {
+                    return Some(Transfer::Pq);
+                }
+            }
+        }
+    }
+    None
+}
+
 glib::wrapper! {
     pub struct RsTonemap(ObjectSubclass<imp::RsTonemap>) @extends gst_base::BaseTransform, gst::Element, gst::Object;
 }
