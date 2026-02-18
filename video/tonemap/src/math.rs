@@ -116,6 +116,34 @@ pub fn bt2020_to_bt709(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
     )
 }
 
+/// Soft gamut compression for out-of-gamut BT.709 values after BT.2020→709 matrix.
+///
+/// After the 3×3 matrix, vivid BT.2020 colors can produce negative RGB values.
+/// Hard-clipping (`max(0)`) causes hue shifts. This function desaturates toward
+/// the BT.709 luma axis just enough to bring the minimum channel to zero,
+/// preserving hue exactly. In-gamut pixels pass through unchanged.
+///
+/// Math: finds the intersection of the luma–pixel line with the zero boundary.
+/// `t = luma / (luma - min_c)` is the mixing factor where `mix(luma, rgb, t)`
+/// brings `min_c` to exactly 0.
+#[inline]
+pub fn soft_gamut_map(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+    let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    let min_c = r.min(g).min(b);
+    if min_c >= 0.0 {
+        return (r, g, b); // in-gamut, no change
+    }
+    if luma <= 0.0 {
+        return (0.0, 0.0, 0.0); // black
+    }
+    let t = luma / (luma - min_c);
+    (
+        luma + t * (r - luma),
+        luma + t * (g - luma),
+        luma + t * (b - luma),
+    )
+}
+
 /// Hable (Uncharted 2) filmic curve — f(x) from GDC 2010 presentation.
 /// Source: libavfilter/vf_tonemap.c `hable()`.
 #[inline]
@@ -276,5 +304,45 @@ mod tests {
         let val = bt709_oetf(0.5);
         let expected = 0.5_f32.powf(1.0 / 2.4);
         assert!(approx_eq(val, expected, 0.001), "expected {expected}, got {val}");
+    }
+
+    #[test]
+    fn soft_gamut_map_in_gamut() {
+        // In-gamut pixels pass through unchanged
+        let (r, g, b) = soft_gamut_map(0.5, 0.3, 0.1);
+        assert_eq!((r, g, b), (0.5, 0.3, 0.1));
+    }
+
+    #[test]
+    fn soft_gamut_map_negative_channel() {
+        // Out-of-gamut: one negative channel should be brought to 0
+        let (r, g, b) = soft_gamut_map(1.0, 0.5, -0.2);
+        assert!(r >= 0.0 && g >= 0.0 && b >= 0.0, "All channels non-negative: ({r}, {g}, {b})");
+        assert!(approx_eq(b, 0.0, 0.001), "Min channel should be ~0, got {b}");
+    }
+
+    #[test]
+    fn soft_gamut_map_preserves_luma() {
+        // Luma should be preserved (desaturation toward luma axis)
+        let (r, g, b) = soft_gamut_map(1.5, 0.3, -0.5);
+        let luma_in = 0.2126 * 1.5 + 0.7152 * 0.3 + 0.0722 * (-0.5);
+        let luma_out = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        assert!(
+            approx_eq(luma_in, luma_out, 0.001),
+            "Luma should be preserved: in={luma_in}, out={luma_out}"
+        );
+    }
+
+    #[test]
+    fn soft_gamut_map_black() {
+        // Zero/negative luma → black
+        let (r, g, b) = soft_gamut_map(-0.1, -0.2, -0.3);
+        assert_eq!((r, g, b), (0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn soft_gamut_map_all_zero() {
+        let (r, g, b) = soft_gamut_map(0.0, 0.0, 0.0);
+        assert_eq!((r, g, b), (0.0, 0.0, 0.0));
     }
 }

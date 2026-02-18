@@ -11,6 +11,13 @@
 //! Extends `GLFilter` so it participates natively in the GL pipeline without
 //! CPU download/upload. The tonemapping math is identical to `imp.rs` / `math.rs`
 //! but runs entirely on the GPU as a fragment shader.
+//!
+//! **10-bit precision limitation**: The GL pipeline uses RGBA8 textures — 10-bit HEVC
+//! sources are quantized to 8-bit by glcolorconvert before our shader runs. This is a
+//! GStreamer GL infrastructure constraint, not fixable in this element. HLG's OETF is
+//! close to a traditional gamma curve, so 8-bit is relatively forgiving. PQ (ST 2084),
+//! however, was designed for 10–12 bit, and 8-bit PQ produces visible banding in dark
+//! gradients. If PQ support sees real use, 8-bit quantization will be the limiting factor.
 
 use gst::{glib, subclass::prelude::*};
 use gst_base::subclass::prelude::*;
@@ -118,6 +125,15 @@ vec3 bt709_oetf(vec3 l) {
     return pow(max(l, 0.0), vec3(1.0 / 2.4));
 }
 
+vec3 soft_gamut_map(vec3 rgb) {
+    float luma = 0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b;
+    float min_c = min(min(rgb.r, rgb.g), rgb.b);
+    if (min_c >= 0.0) return rgb;       // in-gamut, no change
+    if (luma <= 0.0) return vec3(0.0);   // black
+    float t = luma / (luma - min_c);     // desaturate just enough
+    return mix(vec3(luma), rgb, t);
+}
+
 void main() {
     vec4 rgba = texture2D(tex, v_texcoord);
 
@@ -137,7 +153,8 @@ void main() {
     }
 
     vec3 linear_709 = BT2020_TO_BT709 * linear_hdr;
-    vec3 tonemapped = hable_tonemap(max(linear_709, 0.0), peak);
+    vec3 gamut_mapped = soft_gamut_map(linear_709);
+    vec3 tonemapped = hable_tonemap(gamut_mapped, peak);
     vec3 sdr = bt709_oetf(tonemapped);
 
     gl_FragColor = vec4(clamp(sdr, 0.0, 1.0), rgba.a);
@@ -458,11 +475,48 @@ impl GLFilterImpl for RsTonemapGL {
 
     fn transform_internal_caps(
         &self,
-        _direction: gst::PadDirection,
+        direction: gst::PadDirection,
         caps: &gst::Caps,
-        _filter: Option<&gst::Caps>,
+        filter: Option<&gst::Caps>,
     ) -> Option<gst::Caps> {
-        Some(caps.clone())
+        let mut result = gst::Caps::new_empty();
+        {
+            let result_ref = result.make_mut();
+            for i in 0..caps.size() {
+                let mut s = caps.structure(i).unwrap().to_owned();
+
+                match direction {
+                    gst::PadDirection::Sink => {
+                        // Querying what src can produce: HDR input → BT.709 output
+                        if let Ok(c) = s.get::<String>("colorimetry") {
+                            if c.contains("bt2100-hlg")
+                                || c.contains("arib-std-b67")
+                                || c.contains("bt2100-pq")
+                                || c.contains("smpte-st-2084")
+                            {
+                                s.set("colorimetry", "bt709");
+                            }
+                        }
+                    }
+                    gst::PadDirection::Src => {
+                        // Querying what sink can accept: remove colorimetry to accept any
+                        s.remove_field("colorimetry");
+                    }
+                    _ => {}
+                }
+
+                result_ref.append_structure_full(
+                    s,
+                    caps.features(i).map(|f| f.to_owned()),
+                );
+            }
+        }
+
+        if let Some(f) = filter {
+            Some(result.intersect(f))
+        } else {
+            Some(result)
+        }
     }
 
     fn filter_texture(

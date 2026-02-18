@@ -194,6 +194,52 @@ impl BaseTransformImpl for RsTonemap {
     const PASSTHROUGH_ON_SAME_CAPS: bool = false;
     const TRANSFORM_IP_ON_PASSTHROUGH: bool = false;
 
+    fn transform_caps(
+        &self,
+        direction: gst::PadDirection,
+        caps: &gst::Caps,
+        filter: Option<&gst::Caps>,
+    ) -> Option<gst::Caps> {
+        let mut result = gst::Caps::new_empty();
+        {
+            let result_ref = result.make_mut();
+            for i in 0..caps.size() {
+                let mut s = caps.structure(i).unwrap().to_owned();
+
+                match direction {
+                    gst::PadDirection::Sink => {
+                        // Querying what src can produce: HDR input → BT.709 output
+                        if let Ok(c) = s.get::<String>("colorimetry") {
+                            if c.contains("bt2100-hlg")
+                                || c.contains("arib-std-b67")
+                                || c.contains("bt2100-pq")
+                                || c.contains("smpte-st-2084")
+                            {
+                                s.set("colorimetry", "bt709");
+                            }
+                        }
+                    }
+                    gst::PadDirection::Src => {
+                        // Querying what sink can accept: remove colorimetry to accept any
+                        s.remove_field("colorimetry");
+                    }
+                    _ => {}
+                }
+
+                result_ref.append_structure_full(
+                    s,
+                    caps.features(i).map(|f| f.to_owned()),
+                );
+            }
+        }
+
+        if let Some(f) = filter {
+            Some(result.intersect(f))
+        } else {
+            Some(result)
+        }
+    }
+
     fn stop(&self) -> Result<(), gst::ErrorMessage> {
         *self.state.lock().unwrap() = None;
         gst::info!(CAT, imp = self, "Stopped");
@@ -306,13 +352,13 @@ impl BaseTransformImpl for RsTonemap {
                 };
 
                 let (r709, g709, b709) = math::bt2020_to_bt709(lr, lg, lb);
+                let (rg, gg, bg) = math::soft_gamut_map(r709, g709, b709);
 
                 let peak = match transfer {
                     Transfer::Pq => 11.2,
                     Transfer::Hlg => 10.0,
                 };
-                let (rt, gt, bt) =
-                    math::hable_tonemap(r709.max(0.0), g709.max(0.0), b709.max(0.0), peak);
+                let (rt, gt, bt) = math::hable_tonemap(rg, gg, bg, peak);
 
                 let ro = math::bt709_oetf(rt);
                 let go = math::bt709_oetf(gt);
