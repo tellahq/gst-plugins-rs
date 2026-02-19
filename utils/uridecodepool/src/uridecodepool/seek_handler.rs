@@ -770,31 +770,6 @@ impl SeekHandler {
             return true;
         }
 
-        let mut i = 0;
-        let pad = decoderpipeline
-            .imp()
-            .sink()
-            .sink_pads()
-            .first()
-            .unwrap()
-            .clone();
-        while let Some(event) = pad.sticky_event::<gst::event::Tag>(i) {
-            if let gst::EventView::Tag(tag) = event.view() {
-                // Do not send initialization seek to sub timelines!
-                if let Some(is_ges_timeline) = tag.tag().generic("is-ges-timeline") {
-                    if is_ges_timeline.get::<bool>().unwrap() {
-                        gst::info!(
-                            CAT,
-                            obj = decoderpipeline,
-                            "Tag with is-ges-timeline, not sending init seek!"
-                        );
-                        return false;
-                    }
-                }
-            }
-            i += 1;
-        }
-
         gst::info!(CAT, obj = decoderpipeline, "Sending initialization seek");
 
         true

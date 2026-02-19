@@ -705,7 +705,7 @@ impl DecoderPipeline {
                         gst::info!(
                             CAT,
                             obj = pipeline,
-                            "asked not to discard seek {seek_event:?}"
+                            "asked to discard seek {seek_event:?}"
                         );
                         return;
                     }
