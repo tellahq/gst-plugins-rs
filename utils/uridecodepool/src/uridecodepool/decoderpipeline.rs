@@ -702,11 +702,7 @@ impl DecoderPipeline {
                     {
                         seek_event
                     } else {
-                        gst::info!(
-                            CAT,
-                            obj = pipeline,
-                            "asked to discard seek {seek_event:?}"
-                        );
+                        gst::info!(CAT, obj = pipeline, "asked to discard seek {seek_event:?}");
                         return;
                     }
                 } else {

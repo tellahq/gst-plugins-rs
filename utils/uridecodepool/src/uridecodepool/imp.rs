@@ -5,7 +5,7 @@ use futures::prelude::*;
 use gst::glib::translate::ToGlibPtr;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex, Once};
+use std::sync::{Condvar, LazyLock, Mutex, Once};
 
 use gst::glib;
 use gst::glib::Properties;
@@ -45,6 +45,75 @@ impl Default for Settings {
 }
 
 #[derive(Debug, Default)]
+struct PendingFlushStop {
+    awaited_flush_stop_seqnum: Mutex<Option<gst::Seqnum>>,
+    cond: Condvar,
+}
+
+impl PendingFlushStop {
+    /// Returns true if we are waiting for a FLUSH_STOP.
+    fn is_pending(&self) -> bool {
+        self.awaited_flush_stop_seqnum.lock().unwrap().is_some()
+    }
+
+    /// Set the seqnum of the FLUSH_STOP we are waiting for.
+    fn set_seqnum(&self, seqnum: Option<gst::Seqnum>) {
+        *self.awaited_flush_stop_seqnum.lock().unwrap() = seqnum;
+    }
+
+    /// Clear the awaited seqnum and wake any waiter.
+    fn notify(&self) {
+        let mut awaited = self.awaited_flush_stop_seqnum.lock().unwrap();
+        *awaited = None;
+        self.cond.notify_all();
+    }
+
+    /// If `event` is a FLUSH_STOP whose seqnum matches the awaited one, clear
+    /// the seqnum and wake any waiter.
+    fn maybe_notify(&self, event: &gst::EventRef) {
+        if let gst::EventView::FlushStop(_) = event.view() {
+            let mut awaited = self.awaited_flush_stop_seqnum.lock().unwrap();
+            if awaited.as_ref().map_or(false, |seq| seq == &event.seqnum()) {
+                *awaited = None;
+                self.cond.notify_all();
+            }
+        }
+    }
+
+    /// Block until the awaited FLUSH_STOP arrives, or up to 1 second.
+    fn maybe_wait(&self, imp: &UriDecodePoolSrc) -> bool {
+        let awaited = self.awaited_flush_stop_seqnum.lock().unwrap();
+        if awaited.is_none() {
+            return false;
+        }
+        let waiting_start = std::time::Instant::now();
+        gst::debug!(
+            CAT,
+            imp = imp,
+            "Waiting for FLUSH_STOP with seqnum {:?}",
+            *awaited
+        );
+        drop(
+            // use a timeout to avoid blocking forever which happens in real lif
+            // when seqnums are badly handled as we have mecanism to recover from that
+            self.cond
+                .wait_timeout_while(awaited, std::time::Duration::from_secs(1), |seq| {
+                    seq.is_some()
+                }),
+        );
+
+        gst::debug!(
+            CAT,
+            imp = imp,
+            "Waited for FLUSH_STOP for {:?}",
+            waiting_start.elapsed()
+        );
+
+        true
+    }
+}
+
+#[derive(Debug, Default)]
 struct State {
     decoderpipe: Option<DecoderPipeline>,
     bus_message_sigid: Option<glib::SignalHandlerId>,
@@ -57,7 +126,6 @@ struct State {
     // Seek to be processed as soon as underlying pipeline is ready
     pending_seek: Option<gst::Event>,
     flushing: bool,
-    awaited_flush_stop_seqnum: Option<gst::Seqnum>,
     segment_seqnum: Option<gst::Seqnum>,
 
     // We are faking an EOS event (for example when the duration is reached)
@@ -97,6 +165,7 @@ pub struct UriDecodePoolSrc {
     ]
     #[property(name="pipeline", get = Self::pipeline, type = Option<gst::Pipeline>, blurb = "The underlying pipeline in use")]
     state: Mutex<State>,
+    pending_flush_stop: PendingFlushStop,
     start_completed: Mutex<bool>,
 
     #[property(name="pool", get, type = super::UriDecodePool, blurb = "The pool used")]
@@ -108,6 +177,7 @@ impl Default for UriDecodePoolSrc {
         Self {
             settings: Mutex::new(Settings::default()),
             state: Mutex::new(State::default()),
+            pending_flush_stop: Default::default(),
             start_completed: Default::default(),
             pool: pool::PIPELINE_POOL_POOL.lock().unwrap().clone(),
         }
@@ -511,8 +581,7 @@ impl UriDecodePoolSrc {
                 return Err(gst::FlowError::Flushing);
             }
 
-            if self.requested_stream_started(&decoderpipe)
-                && self.state.lock().unwrap().awaited_flush_stop_seqnum.is_none()
+            if self.requested_stream_started(&decoderpipe) && !self.pending_flush_stop.is_pending()
             {
                 match event_type {
                     Some(gst::EventType::Caps) => {
@@ -542,26 +611,10 @@ impl UriDecodePoolSrc {
                     // Handle the case where the sink changed its EOS state
                     // between the pull and now
                     if is_eos || sink.is_eos() {
-                        let mut state = self.state.lock().unwrap();
-                        if state.awaited_flush_stop_seqnum.is_some() {
-                            let pipeline = state.decoderpipe.as_ref().unwrap().clone();
-
-                            gst::info!(
-                                CAT,
-                                imp = self,
-                                "Got EOS while waiting for FLUSH_STOP on {}",
-                                pipeline.name()
-                            );
-                            drop(state);
-
-                            self.dot_pipeline();
-
-                            // Assert if we have been waiting for flush for more than 10s
-                            // to avoid infinite loop
-                            gst::fixme!(CAT, imp = self, "find a way to avoid that ugly sleep");
-                            std::thread::sleep(std::time::Duration::from_secs(1));
+                        if self.pending_flush_stop.maybe_wait(self) {
                             continue;
                         }
+                        let mut state = self.state.lock().unwrap();
 
                         if state.needs_segment {
                             gst::debug!(CAT, imp = self, "Needs segment!");
@@ -630,32 +683,7 @@ impl UriDecodePoolSrc {
                     }
                     gst::EventView::FlushStop(f) => {
                         gst::debug!(CAT, imp = self, "Got FLUSH_STOP {f:?}");
-                        let mut state = self.state.lock().unwrap();
-                        if let Some(seq) = state.awaited_flush_stop_seqnum.as_ref() {
-                            if &event.seqnum() == seq {
-                                gst::info!(
-                                    CAT,
-                                    imp = self,
-                                    "Got FLUSH_STOP with right seqnum {seq:?}, restarting pushing buffers"
-                                );
-                                let _ = state.awaited_flush_stop_seqnum.take();
-                            } else {
-                                gst::info!(
-                                    CAT,
-                                    imp = self,
-                                    "Got FLUSH_STOP with seqnum {:?} while expecting {:?}",
-                                    event.seqnum(),
-                                    seq
-                                );
-                            }
-                        } else {
-                            gst::info!(
-                                CAT,
-                                imp = self,
-                                "Got FLUSH_STOP without a seek seqnum, ignoring"
-                            );
-                        }
-
+                        self.pending_flush_stop.maybe_notify(event);
                         continue;
                     }
                     _ => Some(event),
@@ -689,7 +717,7 @@ impl UriDecodePoolSrc {
                     continue;
                 }
 
-                if self.state.lock().unwrap().awaited_flush_stop_seqnum.is_some() {
+                if self.pending_flush_stop.is_pending() {
                     gst::info!(
                         CAT,
                         imp = self,
@@ -738,6 +766,32 @@ impl UriDecodePoolSrc {
             );
             decoderpipe.pipeline().set_context(&context);
         }
+
+        let sink_sinkpad = decoderpipe.sink().sink_pads().first().unwrap().clone();
+        sink_sinkpad.add_probe(
+            gst::PadProbeType::EVENT_FLUSH,
+            glib::clone!(
+                #[weak(rename_to = this)]
+                self,
+                #[upgrade_or]
+                gst::PadProbeReturn::Ok,
+                move |_pad, probe_info| {
+                    let event = match &probe_info.data {
+                        Some(gst::PadProbeData::Event(e)) => e,
+                        _ => unreachable!(),
+                    };
+                    gst::info!(
+                        CAT,
+                        imp = this,
+                        "Got {:?} seqnum={:?}",
+                        event.type_(),
+                        event.seqnum()
+                    );
+                    this.pending_flush_stop.maybe_notify(event);
+                    gst::PadProbeReturn::Ok
+                }
+            ),
+        );
 
         self.obj().notify("pipeline");
     }
@@ -847,17 +901,16 @@ impl UriDecodePoolSrc {
         probe_info: &mut gst::PadProbeInfo,
         new_segment: &gst::event::Segment,
     ) -> gst::PadProbeReturn {
-        let mut state = self.state.lock().unwrap();
-        if state.awaited_flush_stop_seqnum.is_some() {
+        if self.pending_flush_stop.is_pending() {
             gst::info!(
                 CAT,
                 imp = self,
-                "Dropping segment while waiting flushing seek {:?} to be executed",
-                state.awaited_flush_stop_seqnum
+                "Dropping segment while waiting for flushing seek to be executed"
             );
 
             return gst::PadProbeReturn::Drop;
         }
+        let mut state = self.state.lock().unwrap();
 
         if let Some(segment) = state.current_segment.clone() {
             let mut builder = gst::event::Segment::builder(&segment)
@@ -1122,8 +1175,8 @@ impl ElementImpl for UriDecodePoolSrc {
                         let seek_event = event.clone();
                         let decoderpipe = self.pool.get_decoderpipe(&self.obj());
                         if !decoderpipe.seek_handler().has_eos_sample() {
-                            self.state.lock().unwrap().awaited_flush_stop_seqnum =
-                                decoderpipe.imp().initial_seek().map(|s| s.seqnum());
+                            self.pending_flush_stop
+                                .set_seqnum(decoderpipe.imp().initial_seek().map(|s| s.seqnum()));
                         }
 
                         decoderpipe
@@ -1216,6 +1269,7 @@ impl BaseSrcImpl for UriDecodePoolSrc {
     fn unlock(&self) -> Result<(), gst::ErrorMessage> {
         gst::debug!(CAT, imp = self, "Start flushing!");
         self.state.lock().unwrap().flushing = true;
+        self.pending_flush_stop.notify();
 
         Ok(())
     }
@@ -1260,7 +1314,8 @@ impl BaseSrcImpl for UriDecodePoolSrc {
                         return true;
                     }
 
-                    self.state.lock().unwrap().awaited_flush_stop_seqnum = Some(seek_event.seqnum());
+                    self.pending_flush_stop
+                        .set_seqnum(Some(seek_event.seqnum()));
 
                     gst::info!(CAT, imp = self, "Flushing seek... waiting for flush-stop with right seqnum ({:?}) before restarting pushing buffers", seek_event.seqnum());
                 }
@@ -1278,7 +1333,7 @@ impl BaseSrcImpl for UriDecodePoolSrc {
             );
 
             if !decoderpipe.imp().seek(seek_event) {
-                self.state.lock().unwrap().awaited_flush_stop_seqnum = None;
+                self.pending_flush_stop.notify();
             }
             true
         } else {
@@ -1485,7 +1540,7 @@ impl BaseSrcImpl for UriDecodePoolSrc {
                         CAT,
                         imp = self,
                         "Got seek segment after process --> new seqnum: {seqnum:?} -- {:?}",
-                        state.awaited_flush_stop_seqnum
+                        self.pending_flush_stop.is_pending()
                     );
                     state.segment_seqnum = Some(seqnum);
                 }
@@ -1559,8 +1614,10 @@ impl BaseSrcImpl for UriDecodePoolSrc {
             let mut state = self.state.lock().unwrap();
 
             state.current_segment = None;
-            state.awaited_flush_stop_seqnum = None;
             state.segment_seqnum = None;
+            drop(state);
+            self.pending_flush_stop.notify();
+            let mut state = self.state.lock().unwrap();
             state.seek_event = None;
             state.pending_seek = None;
 
