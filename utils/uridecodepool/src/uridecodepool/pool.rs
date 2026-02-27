@@ -360,6 +360,13 @@ impl UriDecodePool {
             gst::debug!(CAT, "Reusing the exact same pipeline for {:?}", stream_id);
             Some(state.pooled.remove(position))
         } else if let Some(position) = state.pooled.iter().position(|p| {
+            if !p.uridecodebin()
+                .property::<Option<String>>("uri")
+                .map_or(false, |pooled_uri| pooled_uri.as_str() != uri.as_ref().map(|u| u.as_str()).unwrap_or(""))
+            {
+                return false;
+            }
+
             let initial_seek = p.imp().initial_seek();
 
             if initial_seek.is_some() && seek.is_none() {
@@ -367,16 +374,18 @@ impl UriDecodePool {
             } else if initial_seek.is_some()
                 && seek.as_ref().unwrap().structure() != initial_seek.as_ref().unwrap().structure()
             {
-                gst::error!(
+                gst::debug!(
                     CAT,
-                    "Seek events are different {seek:?} != {initial_seek:?}"
+                    obj = src,
+                    "Seek events are different {seek:?} != {initial_seek:?} -- {:?} - {:?}",
+                    p.imp().target_src(),
+                    p.uridecodebin().property::<Option<String>>("uri"),
                 );
+
                 return false;
             }
 
-            p.uridecodebin()
-                .property::<Option<String>>("uri")
-                .map_or(false, |uri| uri.as_str() != uri)
+            true
         }) {
             gst::debug!(
                 CAT,
