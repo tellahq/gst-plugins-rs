@@ -388,11 +388,17 @@ impl SeekHandler {
         // If sample segment has a duration < seek_duration use it
         // as it might be a per-stack segment in a nested timeline, otherwise remap the stop based
         // on the seek segment
-        let new_stop = new_start + if sample_segment.stop().map_or(false, |stop| stop - sample_start < seek_duration) {
-            (sample_segment.stop().unwrap() - sample_start).positive().unwrap()
-        } else {
-            seek_duration
-        };
+        let new_stop = new_start
+            + if sample_segment
+                .stop()
+                .map_or(false, |stop| stop - sample_start < seek_duration)
+            {
+                (sample_segment.stop().unwrap() - sample_start)
+                    .positive()
+                    .unwrap()
+            } else {
+                seek_duration
+            };
 
         let mut segment = seek_segment.clone();
         segment.set_start(new_start);
@@ -541,30 +547,26 @@ impl SeekHandler {
             return NleCompositionSeekResult::Unexpected;
         }
 
-        let duration = obj.duration();
-        if duration.is_none() {
-            if matches!(state.seek_info, SeekInfo::None) {
-                gst::fixme!(
-                    CAT,
-                    obj = obj,
-                    "This assume NLE is used **through** GES \
-                            and GES is responsible for sending the 'intial-seek' and \
-                            does not send it in that case because our underlying \
-                            pipeline is a nested timeline"
-                );
-                let seqnum = seek.seqnum();
+        let has_initial_seek = obj
+            .imp()
+            .decoderpipe()
+            .map_or(true, |dp| dp.imp().initial_seek().is_some());
 
-                gst::info!(CAT, obj = obj, "Force using seqnum {seqnum:?}");
-                return NleCompositionSeekResult::UseSeqnum(seqnum);
-            }
+        if !has_initial_seek && matches!(state.seek_info, SeekInfo::None) {
+            // Sub-timeline case: the sub-composition initializes itself via
+            // the query mechanism. Don't forward this seek; just use its
+            // seqnum for segment matching.
+            let seqnum = seek.seqnum();
 
             gst::info!(
                 CAT,
                 obj = obj,
-                "We had no initial seek and an unexpected seek"
+                "No initial seek (sub-timeline), using seqnum {seqnum:?}"
             );
-            return NleCompositionSeekResult::Unexpected;
+            return NleCompositionSeekResult::UseSeqnum(seqnum);
         }
+
+        let duration = obj.duration();
 
         if let SeekInfo::PreviousSeekDone(_, ref segment) = state.seek_info {
             let segment = segment
