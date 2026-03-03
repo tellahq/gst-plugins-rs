@@ -3,7 +3,10 @@
 use crate::CAT;
 use gst::glib;
 use gst::prelude::*;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Once;
+
+static DUMP_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 static REGISTER_ACTIONS: Once = Once::new();
 
@@ -153,6 +156,54 @@ fn decode_qrcodes_from_sample(sample: &gst::Sample) -> Result<Vec<String>, Strin
     Ok(decoded_codes)
 }
 
+fn dump_sample_to_png(sample: &gst::Sample) -> Option<std::path::PathBuf> {
+    let buffer_ref = sample.buffer()?;
+    let caps = sample.caps()?;
+    let in_info = gst_video::VideoInfo::from_caps(caps).ok()?;
+
+    let width = in_info.width();
+    let height = in_info.height();
+
+    let out_info =
+        gst_video::VideoInfo::builder(gst_video::VideoFormat::Rgb, width, height)
+            .fps(in_info.fps())
+            .build()
+            .ok()?;
+
+    let converter = gst_video::VideoConverter::new(&in_info, &out_info, None).ok()?;
+
+    let in_frame =
+        gst_video::VideoFrameRef::from_buffer_ref_readable(buffer_ref, &in_info).ok()?;
+
+    let rgb_vec = vec![0u8; out_info.size()];
+    let out_buffer = gst::Buffer::from_mut_slice(rgb_vec);
+    let mut out_frame =
+        gst_video::VideoFrame::from_buffer_writable(out_buffer, &out_info).ok()?;
+
+    {
+        let mut out_frame_ref = out_frame.as_mut_video_frame_ref();
+        converter.frame_ref(&in_frame, &mut out_frame_ref);
+    }
+
+    let out_buffer = out_frame.into_buffer();
+    let rgb_vec = out_buffer.try_into_inner::<Vec<u8>>().ok()?;
+
+    let img: image::ImageBuffer<image::Rgb<u8>, _> =
+        image::ImageBuffer::from_raw(width, height, rgb_vec)?;
+
+    let count = DUMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let filename = format!("check-last-frame-qrcode-failure-{}.png", count);
+
+    let logsdir = std::env::var("GST_VALIDATE_LOGSDIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir());
+    let path = logsdir.join(filename);
+
+    img.save(&path).ok()?;
+
+    Some(path)
+}
+
 fn check_last_frame_qrcode(
     scenario: &gst_validate::Scenario,
     action: &gst_validate::Action,
@@ -186,8 +237,18 @@ fn check_last_frame_qrcode(
             ))
         })?;
 
+    let make_error = |msg: String| -> gst_validate::ActionError {
+        if let Some(path) = dump_sample_to_png(&sample) {
+            gst_validate::ActionError::Error(format!(
+                "{msg}\n    Dumped failing frame to: {}", path.display()
+            ))
+        } else {
+            gst_validate::ActionError::Error(msg)
+        }
+    };
+
     let decoded_codes =
-        decode_qrcodes_from_sample(&sample).map_err(gst_validate::ActionError::Error)?;
+        decode_qrcodes_from_sample(&sample).map_err(|e| make_error(e))?;
 
     // Check if JSON field validation is requested
     let json_field_specs: Option<Vec<gst::Structure>> =
@@ -206,7 +267,7 @@ fn check_last_frame_qrcode(
 
     if let Some(expected_json_fields) = json_field_specs {
         if decoded_codes.len() != expected_json_fields.len() {
-            return Err(gst_validate::ActionError::Error(format!(
+            return Err(make_error(format!(
                 "JSON field validation: expected {} QR code(s), but found {} QR code(s): {:?}",
                 expected_json_fields.len(),
                 decoded_codes.len(),
@@ -221,7 +282,7 @@ fn check_last_frame_qrcode(
             .enumerate()
         {
             validate_json_fields(qr_data, field_spec)
-                .map_err(|e| gst_validate::ActionError::Error(format!("QR code #{}: {}", i, e)))?;
+                .map_err(|e| make_error(format!("QR code #{}: {}", i, e)))?;
         }
 
         gst::debug!(
@@ -256,7 +317,7 @@ fn check_last_frame_qrcode(
 
     if expected_values.is_empty() {
         if !decoded_codes.is_empty() {
-            return Err(gst_validate::ActionError::Error(format!(
+            return Err(make_error(format!(
                 "Expected no QR codes, but found {} QR code(s): {:?}",
                 decoded_codes.len(),
                 decoded_codes
@@ -271,7 +332,7 @@ fn check_last_frame_qrcode(
     }
 
     if decoded_codes.len() != expected_values.len() {
-        return Err(gst_validate::ActionError::Error(format!(
+        return Err(make_error(format!(
             "QR code count mismatch: expected {} QR code(s) {:?}, but found {} QR code(s): {:?}",
             expected_values.len(),
             expected_values,
@@ -286,7 +347,7 @@ fn check_last_frame_qrcode(
     sorted_expected.sort();
 
     if sorted_decoded != sorted_expected {
-        return Err(gst_validate::ActionError::Error(format!(
+        return Err(make_error(format!(
             "QR code data mismatch: expected {:?}, got {:?}",
             expected_values, decoded_codes
         )));
