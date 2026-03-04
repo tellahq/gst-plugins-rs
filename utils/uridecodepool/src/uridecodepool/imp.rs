@@ -118,6 +118,7 @@ struct State {
     decoderpipe: Option<DecoderPipeline>,
     bus_message_sigid: Option<glib::SignalHandlerId>,
     source_setup_sigid: Option<glib::SignalHandlerId>,
+    flush_probe_id: Option<(gst::Pad, gst::PadProbeId)>,
 
     current_segment: Option<gst::FormattedSegment<gst::ClockTime>>,
 
@@ -754,8 +755,10 @@ impl UriDecodePoolSrc {
 
         state.needs_segment = true;
         state.decoderpipe = Some(decoderpipe.clone());
+        if let Some((pad, probe_id)) = state.flush_probe_id.take() {
+            pad.remove_probe(probe_id);
+        }
         gst::info!(CAT, imp = self, "Setting decoderpipe to {decoderpipe:?}");
-        drop(state);
 
         for context in obj.contexts() {
             gst::debug!(
@@ -768,7 +771,7 @@ impl UriDecodePoolSrc {
         }
 
         let sink_sinkpad = decoderpipe.sink().sink_pads().first().unwrap().clone();
-        sink_sinkpad.add_probe(
+        let probe_id = sink_sinkpad.add_probe(
             gst::PadProbeType::EVENT_FLUSH,
             glib::clone!(
                 #[weak(rename_to = this)]
@@ -792,6 +795,9 @@ impl UriDecodePoolSrc {
                 }
             ),
         );
+
+        state.flush_probe_id = probe_id.map(|id| (sink_sinkpad, id));
+        drop(state);
 
         self.obj().notify("pipeline");
     }
@@ -1150,6 +1156,9 @@ impl ElementImpl for UriDecodePoolSrc {
         // down
         if transition == gst::StateChange::ReadyToNull {
             let mut state = self.state.lock().unwrap();
+            if let Some((pad, probe_id)) = state.flush_probe_id.take() {
+                pad.remove_probe(probe_id);
+            }
             if let Some(pipeline) = state.decoderpipe.take() {
                 self.pool.release(pipeline);
             }
