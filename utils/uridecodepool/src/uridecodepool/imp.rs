@@ -5,6 +5,7 @@ use futures::prelude::*;
 use gst::glib::translate::ToGlibPtr;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Condvar, LazyLock, Mutex, Once};
 
 use gst::glib;
@@ -771,14 +772,17 @@ impl UriDecodePoolSrc {
         }
 
         let sink_sinkpad = decoderpipe.sink().sink_pads().first().unwrap().clone();
+        let forwarding_flush_stop = std::sync::Arc::new(AtomicBool::new(false));
         let probe_id = sink_sinkpad.add_probe(
             gst::PadProbeType::EVENT_FLUSH,
             glib::clone!(
                 #[weak(rename_to = this)]
                 self,
+                #[strong]
+                forwarding_flush_stop,
                 #[upgrade_or]
                 gst::PadProbeReturn::Ok,
-                move |_pad, probe_info| {
+                move |pad, probe_info| {
                     let event = match &probe_info.data {
                         Some(gst::PadProbeData::Event(e)) => e,
                         _ => unreachable!(),
@@ -790,7 +794,36 @@ impl UriDecodePoolSrc {
                         event.type_(),
                         event.seqnum()
                     );
-                    this.pending_flush_stop.maybe_notify(event);
+
+                    // When we are re-entering from our own send_event() call below,
+                    // just let the event through so the AppSink processes it.
+                    if forwarding_flush_stop.load(std::sync::atomic::Ordering::SeqCst) {
+                        return gst::PadProbeReturn::Ok;
+                    }
+
+                    if matches!(event.view(), gst::EventView::FlushStop(_))
+                        && this
+                            .pending_flush_stop
+                            .awaited_flush_stop_seqnum
+                            .lock()
+                            .unwrap()
+                            .as_ref()
+                            .map_or(false, |seq| seq == &event.seqnum())
+                    {
+                        // Forward the FLUSH_STOP to the AppSink ourselves so that it
+                        // clears its EOS flag before we notify process_objects.
+                        forwarding_flush_stop
+                            .store(true, std::sync::atomic::Ordering::SeqCst);
+                        pad.send_event(event.to_owned());
+                        forwarding_flush_stop
+                            .store(false, std::sync::atomic::Ordering::SeqCst);
+
+                        // Now that the AppSink has processed the FLUSH_STOP (EOS cleared),
+                        // wake up process_objects.
+                        this.pending_flush_stop.notify();
+                        return gst::PadProbeReturn::Handled;
+                    }
+
                     gst::PadProbeReturn::Ok
                 }
             ),
