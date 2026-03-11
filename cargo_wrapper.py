@@ -34,6 +34,8 @@ PARSER.add_argument('--depfile', type=P)
 PARSER.add_argument('--target-dir', type=P, default=None)
 PARSER.add_argument('--disable-doc', action='store_true', default=False)
 PARSER.add_argument('--build-tests', action='store_true', default=False)
+PARSER.add_argument('--library-type', default=None, choices=['cdylib', 'staticlib'])
+PARSER.add_argument('-Z', dest='z_flags', action='append', default=[])
 
 
 def shlex_join(args):
@@ -255,6 +257,8 @@ if __name__ == '__main__':
             cargo_cmd += ['build']
         else:
             cargo_cmd += ['cbuild']
+            if opts.library_type:
+                cargo_cmd += ['--library-type', opts.library_type]
             if not opts.disable_doc:
                 features += ['doc']
 
@@ -278,6 +282,8 @@ if __name__ == '__main__':
         print('Unknown command:', opts.command, file=logfile)
         sys.exit(1)
 
+    for z_flag in opts.z_flags:
+        cargo_cmd += ['-Z', z_flag]
     if rustc_target:
         cargo_cmd += ['--target', rustc_target]
     if features:
@@ -318,6 +324,13 @@ if __name__ == '__main__':
                 str(target_dir / opts.bin) + opts.exe_suffix, recursive=True
             )[0]
             shutil.copy2(exe, opts.build_dir)
+            # Copy companion files (e.g. .wasm, .worker.js for emscripten)
+            exe_path = P(exe)
+            # Emscripten uses underscores for .wasm while cargo uses hyphens for .js
+            stems = {exe_path.stem, exe_path.stem.replace('-', '_')}
+            for sibling in exe_path.parent.iterdir():
+                if sibling != exe_path and sibling.stem in stems and sibling.suffix not in ('.d',):
+                    shutil.copy2(str(sibling), opts.build_dir)
             depfile_content = generate_depfile_for(P(exe), build_start_time, logfile)
         else:
             # Copy library files to build dir
