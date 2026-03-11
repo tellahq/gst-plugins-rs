@@ -68,20 +68,26 @@
  * $ GST_TRACERS="pipeline-snapshot(folder-mode=timed,cleanup-mode=initial)" GST_DEBUG_DUMP_DOT_DIR=. gst-launch-1.0 audiotestsrc ! fakesink
  * ```
  */
+#[cfg(not(target_family = "wasm"))]
 use futures::prelude::*;
 use std::collections::HashMap;
+#[cfg(not(target_family = "wasm"))]
 use std::io::Write;
+#[cfg(not(target_family = "wasm"))]
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, RwLock};
+#[cfg(not(target_family = "wasm"))]
 use tokio::runtime;
 
+#[cfg(not(target_family = "wasm"))]
 use async_tungstenite::tungstenite::Message;
 use gst::glib;
 use gst::glib::translate::ToGlibPtr;
 use gst::glib::Properties;
 use gst::prelude::*;
 use gst::subclass::prelude::*;
+#[cfg(not(target_family = "wasm"))]
 use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 
@@ -96,6 +102,7 @@ static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
     )
 });
 
+#[cfg(not(target_family = "wasm"))]
 pub static RUNTIME: LazyLock<runtime::Runtime> = LazyLock::new(|| {
     runtime::Builder::new_multi_thread()
         .enable_all()
@@ -191,11 +198,13 @@ impl std::str::FromStr for FolderMode {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 #[derive(Debug, Serialize, Deserialize)]
 enum DotViewerMessageType {
     Snapshot,
 }
 
+#[cfg(not(target_family = "wasm"))]
 #[derive(Debug, Serialize, Deserialize)]
 struct DotViewerMessage {
     #[serde(rename = "type")]
@@ -211,6 +220,7 @@ struct Settings {
     xdg_cache: bool,
     cleanup_mode: CleanupMode,
     folder_mode: FolderMode,
+    #[cfg(not(target_family = "wasm"))]
     dots_viewer_ws_url: Option<String>,
 }
 
@@ -224,6 +234,7 @@ impl Default for Settings {
             cleanup_mode: CleanupMode::None,
             dot_pipeline_ptr: false,
             folder_mode: FolderMode::None,
+            #[cfg(not(target_family = "wasm"))]
             dots_viewer_ws_url: None,
         }
     }
@@ -300,6 +311,7 @@ impl Settings {
             };
         }
 
+        #[cfg(not(target_family = "wasm"))]
         if let Ok(websocket) = s.get::<&str>("dots-viewer-ws-url") {
             gst::debug!(CAT, imp = imp, "dots-viewer-websocket-url = {}", websocket);
             self.dots_viewer_ws_url = Some(websocket.to_string());
@@ -329,7 +341,7 @@ struct State {
 #[properties(wrapper_type = super::PipelineSnapshot)]
 pub struct PipelineSnapshot {
     #[property(name="dot-dir", get, set = Self::set_dot_dir, construct_only, type = String, member = dot_dir, blurb = "Directory where to place dot files")]
-    #[property(name="dots-viewer-ws-url", get, set = Self::set_dot_viewer_ws_url, construct_only, type = String, member = dots_viewer_ws_url, blurb = "gst-dots-viewer websocket URL")]
+    #[cfg_attr(not(target_family = "wasm"), property(name="dots-viewer-ws-url", get, set = Self::set_dot_viewer_ws_url, construct_only, type = String, member = dots_viewer_ws_url, blurb = "gst-dots-viewer websocket URL"))]
     #[property(name="xdg-cache", get, set = Self::set_xdg_cache, construct_only, type = bool, member = xdg_cache, blurb = "Use $XDG_CACHE_DIR/gstreamer-dots")]
     #[property(name="dot-prefix", get, set, type = String, member = dot_prefix, blurb = "Prefix for dot files")]
     #[property(name="dot-ts", get, set, type = bool, member = dot_ts, blurb = "Add timestamp to dot files")]
@@ -340,10 +352,12 @@ pub struct PipelineSnapshot {
                set,
                type = FolderMode, member = folder_mode, blurb = "How to create folder each time a snapshot of all pipelines is made", builder(FolderMode::None))]
     settings: RwLock<Settings>,
+    #[cfg(not(target_family = "wasm"))]
     handles: Mutex<Option<Handles>>,
     state: Arc<Mutex<State>>,
 }
 
+#[cfg(not(target_family = "wasm"))]
 #[derive(Debug)]
 struct Handles {
     #[cfg(unix)]
@@ -371,22 +385,29 @@ impl ObjectImpl for PipelineSnapshot {
         }
 
         let has_websocket = settings.dots_viewer_ws_url.is_some();
-        if settings.cleanup_mode == CleanupMode::Initial {
-            drop(settings);
-            self.cleanup_dots(&self.settings.read().unwrap().dot_dir.as_ref(), true);
-        } else {
-            drop(settings);
+        #[cfg(not(target_family = "wasm"))]
+        {
+            if settings.cleanup_mode == CleanupMode::Initial {
+                drop(settings);
+                self.cleanup_dots(&self.settings.read().unwrap().dot_dir.as_ref(), true);
+            } else {
+                drop(settings);
+            }
         }
+        #[cfg(target_family = "wasm")]
+        drop(settings);
 
         self.register_hook(TracerHook::ElementNew);
         self.register_hook(TracerHook::ObjectDestroyed);
 
+        #[cfg(not(target_family = "wasm"))]
         if !has_websocket {
             if let Err(err) = self.setup_signal() {
                 gst::warning!(CAT, imp = self, "failed to setup UNIX signals: {}", err);
             }
         }
 
+        #[cfg(not(target_family = "wasm"))]
         self.setup_websocket();
     }
 
@@ -406,11 +427,14 @@ impl ObjectImpl for PipelineSnapshot {
     }
 
     fn dispose(&self) {
-        let mut handles = self.handles.lock().unwrap();
-        if let Some(handles) = handles.take() {
-            #[cfg(unix)]
-            handles.signal.close();
-            handles.thread.join().unwrap();
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let mut handles = self.handles.lock().unwrap();
+            if let Some(handles) = handles.take() {
+                #[cfg(unix)]
+                handles.signal.close();
+                handles.thread.join().unwrap();
+            }
         }
     }
 }
@@ -479,6 +503,7 @@ impl TracerImpl for PipelineSnapshot {
 }
 
 impl PipelineSnapshot {
+    #[cfg(not(target_family = "wasm"))]
     async fn handle_websocket(
         weak_self: glib::WeakRef<super::PipelineSnapshot>,
         host: String,
@@ -531,6 +556,7 @@ impl PipelineSnapshot {
         Ok(())
     }
 
+    #[cfg(not(target_family = "wasm"))]
     fn setup_websocket(&self) {
         let settings = self.settings.read().unwrap();
 
@@ -566,6 +592,7 @@ impl PipelineSnapshot {
         settings.set_dot_dir(dot_dir);
     }
 
+    #[cfg(not(target_family = "wasm"))]
     fn set_dot_viewer_ws_url(&self, url: Option<String>) {
         let mut settings = self.settings.write().unwrap();
         settings.dots_viewer_ws_url = url;
@@ -577,6 +604,38 @@ impl PipelineSnapshot {
     }
 
     pub(crate) fn snapshot(&self) {
+        let pipelines = {
+            let state = self.state.lock().unwrap();
+            gst::log!(
+                CAT,
+                imp = self,
+                "dumping {} pipelines",
+                state.pipelines.len()
+            );
+
+            state
+                .pipelines
+                .iter()
+                .filter_map(|(ptr, w)| {
+                    let pipeline = w.upgrade();
+
+                    if pipeline.is_none() {
+                        gst::warning!(CAT, imp = self, "Pipeline {ptr:?} disappeared");
+                    }
+                    pipeline
+                })
+                .collect::<Vec<_>>()
+        };
+
+        #[cfg(not(target_family = "wasm"))]
+        self.snapshot_native(&pipelines);
+
+        #[cfg(target_family = "wasm")]
+        self.snapshot_wasm(&pipelines);
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    fn snapshot_native(&self, pipelines: &[gst::Element]) {
         let settings = self.settings.read().unwrap();
 
         let dot_dir = if let Some(dot_dir) = settings.dot_dir.as_ref() {
@@ -626,31 +685,8 @@ impl PipelineSnapshot {
             "".to_string()
         };
 
-        let pipelines = {
-            let state = self.state.lock().unwrap();
-            gst::log!(
-                CAT,
-                imp = self,
-                "dumping {} pipelines",
-                state.pipelines.len()
-            );
-
-            state
-                .pipelines
-                .iter()
-                .filter_map(|(ptr, w)| {
-                    let pipeline = w.upgrade();
-
-                    if pipeline.is_none() {
-                        gst::warning!(CAT, imp = self, "Pipeline {ptr:?} disappeared");
-                    }
-                    pipeline
-                })
-                .collect::<Vec<_>>()
-        };
-
-        for pipeline in pipelines.into_iter() {
-            let pipeline = pipeline.downcast::<gst::Pipeline>().unwrap();
+        for pipeline in pipelines.iter() {
+            let pipeline = pipeline.clone().downcast::<gst::Pipeline>().unwrap();
             gst::debug!(CAT, imp = self, "dump {}", pipeline.name());
 
             let pipeline_ptr = if settings.dot_pipeline_ptr {
@@ -741,6 +777,20 @@ impl PipelineSnapshot {
         }
     }
 
+    #[cfg(target_family = "wasm")]
+    fn snapshot_wasm(&self, pipelines: &[gst::Element]) {
+        for pipeline in pipelines.iter() {
+            let pipeline = pipeline.clone().downcast::<gst::Pipeline>().unwrap();
+            gst::debug!(CAT, imp = self, "WASM dump {}", pipeline.name());
+
+            let name = pipeline.name();
+            let data = pipeline.debug_to_dot_data(gst::DebugGraphDetails::all());
+
+            super::emscripten::notify_new_dot(name.as_str(), data.as_str());
+        }
+    }
+
+    #[cfg(not(target_family = "wasm"))]
     fn write_dot_file_atomically(&self, path: &Path, data: &[u8]) -> std::io::Result<()> {
         // Create a temporary file in the same directory
         let tmp_path = path.with_extension("dot.tmp");
@@ -760,6 +810,7 @@ impl PipelineSnapshot {
         Ok(())
     }
 
+    #[cfg(not(target_family = "wasm"))]
     #[cfg(unix)]
     fn setup_signal(&self) -> anyhow::Result<()> {
         use signal_hook::consts::signal::*;
@@ -794,11 +845,13 @@ impl PipelineSnapshot {
         Ok(())
     }
 
+    #[cfg(not(target_family = "wasm"))]
     #[cfg(not(unix))]
     fn setup_signal(&self) -> anyhow::Result<()> {
         anyhow::bail!("only supported on UNIX system");
     }
 
+    #[cfg(not(target_family = "wasm"))]
     fn cleanup_dots(&self, dot_dir: &Option<&String>, recurse: bool) {
         if let Some(dot_dir) = dot_dir {
             gst::info!(CAT, imp = self, "Cleaning up {}", dot_dir);

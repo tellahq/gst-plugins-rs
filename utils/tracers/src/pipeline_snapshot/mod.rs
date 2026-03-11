@@ -10,6 +10,8 @@ use gst::glib;
 use gst::prelude::*;
 use gst::subclass::prelude::*;
 
+#[cfg(target_family = "wasm")]
+mod emscripten;
 mod imp;
 
 glib::wrapper! {

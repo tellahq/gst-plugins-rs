@@ -19,12 +19,12 @@ mod buffer_lateness;
 mod memory_tracer;
 mod pad_push_timings;
 mod pcap_writer;
-#[cfg(unix)]
+#[cfg(any(unix, target_family = "wasm"))]
 mod pipeline_snapshot;
 mod queue_levels;
 
 fn plugin_init(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
-    #[cfg(unix)]
+    #[cfg(any(unix, target_family = "wasm"))]
     pipeline_snapshot::register(plugin)?;
     queue_levels::register(plugin)?;
     buffer_lateness::register(plugin)?;
