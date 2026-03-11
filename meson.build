@@ -620,9 +620,16 @@ extra_args = []
 if get_option('doc').disabled()
   extra_args += ['--disable-doc']
 endif
+if default_library == 'static'
+  extra_args += ['--library-type', 'staticlib']
+elif default_library == 'shared'
+  extra_args += ['--library-type', 'cdylib']
+endif
 
-# 'pkgconfig' is the entry in the machine file, if specified
-pkg_config = find_program('pkgconfig', 'pkg-config')
+# cargo and system-deps run on the build machine, so we need the native
+# pkg-config — not the cross-file override (which may be set to 'false'
+# to prevent meson from finding host-system packages for C builds).
+pkg_config = find_program('pkgconfig', 'pkg-config', native: true, required: false)
 if pkg_config.found()
   extra_env += {'PKG_CONFIG': pkg_config.full_path()}
 endif
@@ -637,7 +644,17 @@ if pkg_config_path.length() > 0
 endif
 
 # get cmdline for rust
-extra_env += {'RUSTC': ' '.join(rustc.cmd_array())}
+rustc_cmd = ' '.join(rustc.cmd_array())
+if host_system == 'emscripten'
+  # Emscripten with pthreads needs atomics and bulk-memory features.
+  # Use emscripten-style exceptions (-fexceptions) to match the C build.
+  # Also need to rebuild std with atomics support (-Zbuild-std on nightly).
+  rustc_cmd += ' -C target-feature=+atomics,+bulk-memory -C link-arg=-fexceptions -C link-arg=-pthread'
+  extra_env += {'RUSTUP_TOOLCHAIN': 'nightly'}
+  rustc_cmd += ' -C panic=abort'
+  extra_args += ['-Zbuild-std=std,panic_abort']
+endif
+extra_env += {'RUSTC': rustc_cmd}
 
 # Build plugins in the plugins subdirectory
 subdir('plugins')
