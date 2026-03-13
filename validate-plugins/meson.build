@@ -47,7 +47,17 @@ rs_validate_plugins = custom_target('gst-validate-plugins-rs',
     '--depfile', '@DEPFILE@',
     '--lib-suffixes', library_suffixes,
     '--target-dir', meson.current_build_dir() / '..' / 'target',
-  ])
+  ] + extra_args)
+
+foreach output : rs_validate_plugins.to_list()
+  if not output.full_path().endswith('.pc')
+    gstrsvalidate_dep = declare_dependency(
+      link_with: output,
+      variables: {'full_path': output.full_path()},
+    )
+    meson.override_dependency('gstrsvalidate', gstrsvalidate_dep)
+  endif
+endforeach
 
 # Set up development environment for validate plugins
 meson.add_devenv({'GST_VALIDATE_PLUGIN_PATH': meson.current_build_dir()}, method: 'prepend')
