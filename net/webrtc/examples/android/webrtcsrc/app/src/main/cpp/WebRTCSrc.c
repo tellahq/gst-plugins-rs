@@ -128,7 +128,8 @@ handle_media_stream(GstPad *pad, GstElement *pipe, const char *convert_name,
 }
 
 static void
-on_incoming_stream(__attribute__((unused)) GstElement *webrtcsrc, GstPad *pad, WebRTCSrcCtx *ctx) {
+on_incoming_stream(__attribute__((unused)) GstElement *webrtcsrc, GstPad *pad, gpointer user_data) {
+    WebRTCSrcCtx *ctx = (WebRTCSrcCtx *) user_data;
     const gchar *name = gst_pad_get_name(pad);
 
     if (g_str_has_prefix(name, "video")) {
