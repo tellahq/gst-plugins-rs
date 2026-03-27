@@ -276,14 +276,27 @@ impl UriDecodePool {
             return None;
         }
 
-        let decoderpipe = self.get_unused_or_create_pipeline(src, &mut state);
-        gst::debug!(CAT, imp = self, "Starting {decoderpipe:?}");
+        if state
+            .prepared
+            .iter()
+            .any(|p| p.imp().target_src().is_pending_for(src))
+        {
+            gst::debug!(
+                CAT,
+                "Pipeline already prepared for {}:{:?}",
+                src.name(),
+                src as *const _
+            );
+            return None;
+        }
+
+        let decoderpipe = self.create_pipeline_for_src(src);
+
         if let Err(err) = decoderpipe.imp().play() {
             gst::warning!(CAT, imp = self, "Failed to play pipeline: {}", err);
             if let Err(e) = decoderpipe.imp().release() {
                 gst::error!(CAT, imp = self, "Failed to release pipeline: {}", e);
             }
-
             return None;
         }
 
@@ -332,7 +345,10 @@ impl UriDecodePool {
 
             (pipe, self.state.lock().unwrap())
         } else {
-            (self.get_unused_or_create_pipeline(src, &mut state), state)
+            let pipe = self.create_pipeline_for_src(src);
+            pipe.imp()
+                .set_target_src(TargetSrcState::InUse(src.clone()));
+            (pipe, state)
         };
 
         state.running.push(decoderpipe.clone());
@@ -360,9 +376,12 @@ impl UriDecodePool {
             gst::debug!(CAT, "Reusing the exact same pipeline for {:?}", stream_id);
             Some(state.pooled.remove(position))
         } else if let Some(position) = state.pooled.iter().position(|p| {
-            if !p.uridecodebin()
+            if !p
+                .uridecodebin()
                 .property::<Option<String>>("uri")
-                .map_or(false, |pooled_uri| pooled_uri.as_str() != uri.as_ref().map(|u| u.as_str()).unwrap_or(""))
+                .map_or(false, |pooled_uri| {
+                    pooled_uri.as_str() != uri.as_ref().map(|u| u.as_str()).unwrap_or("")
+                })
             {
                 return false;
             }
@@ -399,61 +418,7 @@ impl UriDecodePool {
         };
 
         let decoderpipe = decoderpipe.map_or_else(
-            || {
-                let pipeline_name = format!(
-                    "{}_{}",
-                    src.name(),
-                    src.imp().prepare_pipeline_next_number()
-                );
-                let pipeline = DecoderPipeline::new(
-                    &pipeline_name,
-                    uri.as_ref()
-                        .expect("URI should be set when getting an underlying pipeline"),
-                    &caps,
-                    stream_id.as_deref(),
-                    &self.obj(),
-                    seek,
-                );
-                gst::info!(
-                    CAT,
-                    "Started new pipeline for {:?} -> {}",
-                    src.name(),
-                    pipeline.pipeline().name()
-                );
-                let obj = self.obj();
-
-                // Make sure the pipeline is returned to the pool once it is ready to be reused
-                pipeline.connect_closure(
-                    "released",
-                    false,
-                    glib::closure!(
-                        #[watch]
-                        obj,
-                        move |pipeline: DecoderPipeline| {
-                            obj.imp().pipeline_released_cb(pipeline);
-                        }
-                    ),
-                );
-
-                pipeline.connect_closure(
-                    "stopped",
-                    false,
-                    glib::closure!(
-                        #[watch]
-                        obj,
-                        move |pipeline: DecoderPipeline| {
-                            obj.imp().pipeline_stopped_cb(pipeline);
-                        }
-                    ),
-                );
-
-                obj.emit_by_name::<()>("new-pipeline", &[&pipeline.pipeline()]);
-
-                let mut all_pipelines = self.pipelines.lock().unwrap();
-                all_pipelines.insert(0, pipeline.clone());
-                self.pipelines_cond.notify_one();
-                pipeline
-            },
+            || self.create_pipeline_for_src(src),
             |decoderpipe| {
                 decoderpipe.reset(uri.as_ref().unwrap(), &caps, stream_id.as_deref());
 
@@ -467,6 +432,69 @@ impl UriDecodePool {
             .imp()
             .set_target_src(TargetSrcState::InUse(src.clone()));
         decoderpipe
+    }
+
+    fn create_pipeline_for_src(
+        &self,
+        src: &super::UriDecodePoolSrc,
+    ) -> DecoderPipeline {
+        let uri = src.uri();
+        let caps = src.caps();
+        let stream_id = src.stream_id();
+        let seek = src.imp().initial_seek_event();
+
+        let pipeline_name = format!(
+            "{}_{}",
+            src.name(),
+            src.imp().prepare_pipeline_next_number()
+        );
+        let pipeline = DecoderPipeline::new(
+            &pipeline_name,
+            uri.as_ref()
+                .expect("URI should be set when getting an underlying pipeline"),
+            &caps,
+            stream_id.as_deref(),
+            &self.obj(),
+            seek,
+        );
+        gst::info!(
+            CAT,
+            "Started new pipeline for {:?} -> {}",
+            src.name(),
+            pipeline.pipeline().name()
+        );
+        let obj = self.obj();
+
+        pipeline.connect_closure(
+            "released",
+            false,
+            glib::closure!(
+                #[watch]
+                obj,
+                move |pipeline: DecoderPipeline| {
+                    obj.imp().pipeline_released_cb(pipeline);
+                }
+            ),
+        );
+
+        pipeline.connect_closure(
+            "stopped",
+            false,
+            glib::closure!(
+                #[watch]
+                obj,
+                move |pipeline: DecoderPipeline| {
+                    obj.imp().pipeline_stopped_cb(pipeline);
+                }
+            ),
+        );
+
+        obj.emit_by_name::<()>("new-pipeline", &[&pipeline.pipeline()]);
+
+        let mut all_pipelines = self.pipelines.lock().unwrap();
+        all_pipelines.insert(0, pipeline.clone());
+        self.pipelines_cond.notify_one();
+        pipeline
     }
 
     fn pipeline_released_cb(&self, pipeline: DecoderPipeline) {
