@@ -441,7 +441,7 @@ impl TracerImpl for PipelineSnapshot {
             let weak = element.upcast_ref::<gst::Object>().downgrade();
             let mut state = self.state.lock().unwrap();
             state.timelines.insert(timeline_ptr, weak);
-            gst::error!(
+            gst::log!(
                 CAT,
                 imp = self,
                 "new timeline: {} ({:?}) got {} now",
