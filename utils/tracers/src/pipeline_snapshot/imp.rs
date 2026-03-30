@@ -384,6 +384,7 @@ impl ObjectImpl for PipelineSnapshot {
             settings.update_from_params(self, params);
         }
 
+        #[cfg(not(target_family = "wasm"))]
         let has_websocket = settings.dots_viewer_ws_url.is_some();
         #[cfg(not(target_family = "wasm"))]
         {
