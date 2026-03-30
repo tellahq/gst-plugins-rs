@@ -649,7 +649,12 @@ if host_system == 'emscripten'
   # Emscripten with pthreads needs atomics and bulk-memory features.
   # Use emscripten-style exceptions (-fexceptions) to match the C build.
   # Also need to rebuild std with atomics support (-Zbuild-std on nightly).
-  rustc_cmd += ' -C target-feature=+atomics,+bulk-memory -C link-arg=-fexceptions -C link-arg=-pthread'
+  # Meson doesn't reliably pass --target from cross-files for Rust, so ensure it.
+  if not rustc_cmd.contains('--target')
+    rustc_cmd += ' --target wasm32-unknown-emscripten'
+  endif
+  rustc_cmd += ' -C linker=emcc -C target-feature=+atomics,+bulk-memory -C link-arg=-fexceptions -C link-arg=-pthread'
+  rustc_cmd += ' --cfg tokio_unstable'
   extra_env += {'RUSTUP_TOOLCHAIN': 'nightly'}
   rustc_cmd += ' -C panic=abort'
   extra_args += ['-Zbuild-std=std,panic_abort']
@@ -720,7 +725,10 @@ foreach plugin : plugins
     dependencies: plugin_deps,
     variables: {'full_path': plugin.full_path()},
   )
-  meson.override_dependency(plugin_name, dep)
+  # validate plugins are already overridden in validate-plugins/meson.build
+  if plugin_name != 'gstrsvalidate'
+    meson.override_dependency(plugin_name, dep)
+  endif
 
   if default_library == 'static' and plugin_name in ['gstcsound', 'gstthreadshare', 'gstgtk4']
     warning('Static plugin @0@ is known to fail. It will not be included in libgstreamer-full.'.format(plugin_name))
