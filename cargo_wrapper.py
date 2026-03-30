@@ -374,14 +374,15 @@ if __name__ == '__main__':
         # Copy generated pkg-config files
         for f in glob.glob(str(target_dir / '*.pc'), recursive=True):
             pc_file = P(f)
-            if pc_file.stem not in allowed_lib_names:
+            base_stem = pc_file.stem.removesuffix('-uninstalled')
+            if base_stem not in allowed_lib_names:
                 print(f'Skipping {pc_file.name} (not in --packages)', file=logfile)
                 continue
             print(f'Copying {pc_file}', file=logfile)
             shutil.copy(f, opts.build_dir)
 
         # Move -uninstalled.pc to meson-uninstalled
-        uninstalled = opts.build_dir / 'meson-uninstalled'
+        uninstalled = opts.root_dir / 'meson-uninstalled'
         os.makedirs(uninstalled, exist_ok=True)
 
         for f in opts.build_dir.glob('*-uninstalled.pc'):
