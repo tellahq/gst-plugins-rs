@@ -16,13 +16,16 @@ gst-base = { workspace = true, features = ["v1_24"] }
 gst-validate = { workspace = true, optional = true }
 
 tokio = { version = "1", features = [
-  "fs",
   "macros",
   "rt-multi-thread",
   "time",
 ] }
 futures = "0.3"
 parking_lot = "0.12"
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies.tokio]
+version = "1"
+features = ["fs"]
 
 [lib]
 name = "gsturidecodepool"
