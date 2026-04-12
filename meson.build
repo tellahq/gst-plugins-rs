@@ -86,8 +86,8 @@ endif
 if get_option('tests').allowed()
   deps += [['gstreamer-check-1.0', 'gstreamer', 'gst_check_dep', 'gst_check']]
 endif
-if get_option('gtk4').allowed()
-  deps += [['gstreamer-gl-1.0', 'gst-plugins-base', 'gstgl_dep', 'gstgl', get_option('gtk4')]]
+if get_option('gtk4').allowed() or get_option('skia').allowed()
+  deps += [['gstreamer-gl-1.0', 'gst-plugins-base', 'gstgl_dep', 'gstgl']]
 endif
 if get_option('threadshare').allowed() or get_option('rtsp').allowed()
   deps += [['gstreamer-net-1.0', 'gstreamer', 'gst_net_dep', 'gst_net']]
