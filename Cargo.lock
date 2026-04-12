@@ -3226,6 +3226,8 @@ dependencies = [
  "gstreamer",
  "gstreamer-base",
  "gstreamer-check",
+ "gstreamer-editing-services",
+ "gstreamer-gl",
  "gstreamer-video",
  "skia-safe",
  "tracing",
