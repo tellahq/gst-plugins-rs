@@ -303,6 +303,28 @@ if skia_opt.allowed()
     message('Using Skia from Meson')
     extra_env += {'SKIA_USE_PKG_CONFIG': '1'}
   endif
+  if host_system == 'emscripten'
+    # bindgen uses its own clang which doesn't get emscripten's implicit
+    # -iwithsysroot/include/compat. Add it so xlocale.h etc. are found.
+    emcc_cflags = run_command(
+      'emcc', '--cflags',
+      capture: true, check: true,
+    ).stdout().strip()
+    foreach flag : emcc_cflags.split()
+      if flag.startswith('--sysroot=')
+        sysroot = flag.split('=')[1]
+        extra_env += {
+          'BINDGEN_EXTRA_CLANG_ARGS': '--sysroot=' + sysroot + ' -iwithsysroot/include/compat',
+        }
+        break
+      endif
+    endforeach
+    # skia-bindings uses cc::Build to compile C++ shims. These must be
+    # compiled with atomics+bulk-memory to match the pthreads build.
+    extra_env += {
+      'CXXFLAGS': '-pthread -matomics -mbulk-memory -fPIC',
+    }
+  endif
 endif
 
 cc = meson.get_compiler('c')
