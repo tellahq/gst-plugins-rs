@@ -763,9 +763,18 @@ foreach plugin : plugins
     endif
   endforeach
 
+  extra_link_args = []
+  if plugin_name == 'gstskia' and skia_opt.allowed() and skia_dep_from_meson.found() and skia_dep_from_meson.type_name() == 'internal'
+    # Skia is built as a custom_target which can't be propagated via
+    # link_with through dependency chains. Pass library paths as link_args.
+    skia_builddir = meson.global_build_root() / 'subprojects' / 'skia'
+    extra_link_args = [skia_builddir / 'libskia.a']
+  endif
+
   dep = declare_dependency(
     link_with: plugin,
     dependencies: plugin_deps,
+    link_args: extra_link_args,
     variables: {'full_path': plugin.full_path()},
   )
   # validate plugins are already overridden in validate-plugins/meson.build
