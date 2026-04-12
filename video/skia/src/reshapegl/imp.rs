@@ -313,8 +313,6 @@ impl GLBaseFilterImpl for SkiaReshapeGL {
 
         let filter = self.obj();
 
-        // Create a shader when GL is started, knowing that the OpenGL context is
-        // available.
         let context = match GLBaseFilterExt::context(&*filter) {
             Some(ctx) => ctx,
             None => {
@@ -324,31 +322,63 @@ impl GLBaseFilterImpl for SkiaReshapeGL {
         };
 
         gl::load_with(|name| context.proc_address(name) as *const _);
-        let display = context.display();
-        let our_context = gst_gl::GLContext::new(&display);
 
-        our_context
-            .create(Some(&context))
-            .map_err(|e| gst::loggable_error!(CAT, "Couldn't start our context {e:?}."))?;
-        gst::log!(CAT, imp = self, "Created our own {:?}", context);
+        #[cfg(target_os = "emscripten")]
+        {
+            // On Emscripten, creating a second GL context requires a new
+            // OffscreenCanvas which is not possible in PROXY_TO_PTHREAD
+            // mode. Use the existing GStreamer GL context directly.
+            let gl_interface = skia::gpu::gl::Interface::new_load_with(|name| {
+                context.proc_address(name) as *const std::ffi::c_void
+            })
+            .ok_or_else(|| {
+                gst::loggable_error!(CAT, "Failed to create Skia GL interface")
+            })?;
 
-        let gl_result: std::sync::Arc<std::sync::Mutex<Result<(), gst::LoggableError>>> =
-            std::sync::Arc::new(std::sync::Mutex::new(Ok(())));
-        our_context.thread_add(glib::clone!(
-            #[to_owned(rename_to = this)]
-            self,
-            #[strong]
-            gl_result,
-            move |context| {
-                if let Some(gl_interface) = skia::gpu::gl::Interface::new_load_with(|name| {
-                    context.proc_address(name) as *const std::ffi::c_void
-                }) {
-                    if let Some(direct_context) =
-                        skia::gpu::direct_contexts::make_gl(gl_interface, None)
-                    {
-                        *this.context.lock().unwrap() = Some(SkContext(direct_context));
-                        *this.gstglcontext.lock().unwrap() = Some(context.clone());
-                        gst::debug!(CAT, imp = self, "Created Skia GL context");
+            let direct_context =
+                skia::gpu::direct_contexts::make_gl(gl_interface, None).ok_or_else(|| {
+                    gst::loggable_error!(CAT, "Failed to create Skia GL direct context")
+                })?;
+
+            *self.context.lock().unwrap() = Some(SkContext(direct_context));
+            *self.gstglcontext.lock().unwrap() = Some(context.clone());
+            gst::debug!(CAT, imp = self, "Created Skia GL context (emscripten, shared)");
+        }
+
+        #[cfg(not(target_os = "emscripten"))]
+        {
+            let display = context.display();
+            let our_context = gst_gl::GLContext::new(&display);
+
+            our_context
+                .create(Some(&context))
+                .map_err(|e| gst::loggable_error!(CAT, "Couldn't start our context {e:?}."))?;
+            gst::log!(CAT, imp = self, "Created our own {:?}", context);
+
+            let gl_result: std::sync::Arc<std::sync::Mutex<Result<(), gst::LoggableError>>> =
+                std::sync::Arc::new(std::sync::Mutex::new(Ok(())));
+            our_context.thread_add(glib::clone!(
+                #[to_owned(rename_to = this)]
+                self,
+                #[strong]
+                gl_result,
+                move |context| {
+                    if let Some(gl_interface) = skia::gpu::gl::Interface::new_load_with(|name| {
+                        context.proc_address(name) as *const std::ffi::c_void
+                    }) {
+                        if let Some(direct_context) =
+                            skia::gpu::direct_contexts::make_gl(gl_interface, None)
+                        {
+                            *this.context.lock().unwrap() = Some(SkContext(direct_context));
+                            *this.gstglcontext.lock().unwrap() = Some(context.clone());
+                            gst::debug!(CAT, imp = self, "Created Skia GL context");
+                        } else {
+                            *gl_result.lock().unwrap() = Err(gst::loggable_error!(
+                                CAT,
+                                "Failed to create Skia GL direct context"
+                            ));
+                            return;
+                        }
                     } else {
                         *gl_result.lock().unwrap() = Err(gst::loggable_error!(
                             CAT,
@@ -356,19 +386,17 @@ impl GLBaseFilterImpl for SkiaReshapeGL {
                         ));
                         return;
                     }
-                } else {
-                    *gl_result.lock().unwrap() = Err(gst::loggable_error!(
+
+                    gst::debug!(
                         CAT,
-                        "Failed to create Skia GL direct context"
-                    ));
-                    return;
+                        imp = self,
+                        "Successfully created Skia GL context pair"
+                    );
                 }
+            ));
 
-                gst::debug!(CAT, imp = self, "Successfully created Skia GL context pair");
-            }
-        ));
-
-        gl_result.lock().unwrap().clone()?;
+            gl_result.lock().unwrap().clone()?;
+        }
 
         self.parent_gl_start()
     }
@@ -427,75 +455,109 @@ impl GLFilterImpl for SkiaReshapeGL {
         let input_tex_id = in_mem.texture_id();
         let output_tex_id = out_mem.texture_id();
 
-        let gl_result: std::sync::Arc<std::sync::Mutex<Result<(), gst::LoggableError>>> =
-            std::sync::Arc::new(std::sync::Mutex::new(Ok(())));
-        self.gstglcontext
-            .lock()
-            .unwrap()
-            .as_ref()
-            .expect("No dedicated GL context available")
-            .thread_add(glib::clone!(
-                #[weak(rename_to = this)]
-                self,
-                #[strong]
-                gl_result,
-                move |context| {
-                    if let Err(err) = context.activate(true) {
-                        *gl_result.lock().unwrap() = Err(gst::loggable_error!(CAT, "{err:?}",));
-                        return;
-                    }
-                    gst::debug!(
-                        CAT,
-                        "EXECUTING SKIA RENDERING IN DEDICATED CONTEXT: {:?}",
-                        context
-                    );
+        #[cfg(target_os = "emscripten")]
+        {
+            // On Emscripten we share the main GL context — run Skia directly.
+            let skia_context_mutex = self.context.lock().unwrap();
+            let mut skia_context = skia_context_mutex
+                .as_ref()
+                .expect("No Skia context while filtering")
+                .clone();
+            drop(skia_context_mutex);
 
-                    let skia_context_mutex = this.context.lock().unwrap();
-                    let mut skia_context = skia_context_mutex
-                        .as_ref()
-                        .expect("No Skia context while filtering")
-                        .clone();
-                    drop(skia_context_mutex);
+            unsafe { gl::Finish(); }
 
-                    // Ensure any pending GL operations are complete before Skia uses the textures
-                    unsafe {
-                        gl::Finish();
-                    }
+            let render_result = self.render_with_skia(
+                &crate::BufferRef::new(output),
+                &out_info,
+                &mut skia_context.0,
+                input_tex_id,
+                output_tex_id,
+                &in_info,
+                &out_info,
+            );
 
-                    // Call render_with_skia in the dedicated context
-                    let render_result = this.render_with_skia(
-                        &crate::BufferRef::new(output),
-                        &out_info,
-                        &mut skia_context.0,
-                        input_tex_id,
-                        output_tex_id,
-                        &in_info,
-                        &out_info,
-                    );
-
-                    match render_result {
-                        Ok(_) => {
-                            // Force GL to complete all operations before continuing
-                            unsafe {
-                                gl::Finish();
-                            }
-                            gst::debug!(
-                                CAT,
-                                "Skia rendering completed successfully in dedicated context"
-                            );
-                        }
-                        Err(e) => {
-                            *gl_result.lock().unwrap() = Err(e);
-                        }
-                    }
-                    if let Err(err) = context.activate(false) {
-                        *gl_result.lock().unwrap() = Err(gst::loggable_error!(CAT, "{err:?}",));
-                        return;
-                    }
+            match render_result {
+                Ok(_) => {
+                    unsafe { gl::Finish(); }
+                    gst::debug!(CAT, "Skia rendering completed successfully");
+                    Ok(())
                 }
-            ));
+                Err(e) => Err(e),
+            }
+        }
 
-        let result = gl_result.lock().unwrap().clone();
-        result
+        #[cfg(not(target_os = "emscripten"))]
+        {
+            let gl_result: std::sync::Arc<std::sync::Mutex<Result<(), gst::LoggableError>>> =
+                std::sync::Arc::new(std::sync::Mutex::new(Ok(())));
+            self.gstglcontext
+                .lock()
+                .unwrap()
+                .as_ref()
+                .expect("No dedicated GL context available")
+                .thread_add(glib::clone!(
+                    #[weak(rename_to = this)]
+                    self,
+                    #[strong]
+                    gl_result,
+                    move |context| {
+                        if let Err(err) = context.activate(true) {
+                            *gl_result.lock().unwrap() =
+                                Err(gst::loggable_error!(CAT, "{err:?}",));
+                            return;
+                        }
+                        gst::debug!(
+                            CAT,
+                            "EXECUTING SKIA RENDERING IN DEDICATED CONTEXT: {:?}",
+                            context
+                        );
+
+                        let skia_context_mutex = this.context.lock().unwrap();
+                        let mut skia_context = skia_context_mutex
+                            .as_ref()
+                            .expect("No Skia context while filtering")
+                            .clone();
+                        drop(skia_context_mutex);
+
+                        unsafe {
+                            gl::Finish();
+                        }
+
+                        let render_result = this.render_with_skia(
+                            &crate::BufferRef::new(output),
+                            &out_info,
+                            &mut skia_context.0,
+                            input_tex_id,
+                            output_tex_id,
+                            &in_info,
+                            &out_info,
+                        );
+
+                        match render_result {
+                            Ok(_) => {
+                                unsafe {
+                                    gl::Finish();
+                                }
+                                gst::debug!(
+                                    CAT,
+                                    "Skia rendering completed successfully in dedicated context"
+                                );
+                            }
+                            Err(e) => {
+                                *gl_result.lock().unwrap() = Err(e);
+                            }
+                        }
+                        if let Err(err) = context.activate(false) {
+                            *gl_result.lock().unwrap() =
+                                Err(gst::loggable_error!(CAT, "{err:?}",));
+                            return;
+                        }
+                    }
+                ));
+
+            let result = gl_result.lock().unwrap().clone();
+            result
+        }
     }
 }
