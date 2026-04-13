@@ -328,11 +328,13 @@ impl GLBaseFilterImpl for SkiaReshapeGL {
             // On Emscripten, creating a second GL context requires a new
             // OffscreenCanvas which is not possible in PROXY_TO_PTHREAD
             // mode. Use the existing GStreamer GL context directly.
-            let gl_interface = skia::gpu::gl::Interface::new_load_with(|name| {
-                context.proc_address(name) as *const std::ffi::c_void
-            })
-            .ok_or_else(|| {
-                gst::loggable_error!(CAT, "Failed to create Skia GL interface")
+            //
+            // Also use Skia's WebGL-specific GL interface rather than the
+            // generic `new_load_with` loader: the latter probes for desktop
+            // GL functions like glViewportArrayv which don't exist in
+            // WebGL and fail proc_address lookups.
+            let gl_interface = skia::gpu::interfaces::make_web_gl().ok_or_else(|| {
+                gst::loggable_error!(CAT, "Failed to create Skia WebGL interface")
             })?;
 
             let direct_context =
@@ -465,6 +467,10 @@ impl GLFilterImpl for SkiaReshapeGL {
                 .clone();
             drop(skia_context_mutex);
 
+            // GstGL has issued GL commands since the last Skia call, so
+            // invalidate Skia's cached GL state before using the context.
+            skia_context.0.reset(None);
+
             unsafe { gl::Finish(); }
 
             let render_result = self.render_with_skia(
@@ -479,6 +485,11 @@ impl GLFilterImpl for SkiaReshapeGL {
 
             match render_result {
                 Ok(_) => {
+                    // Skia has touched GL state (viewport, fbo, program,
+                    // scissor, blend etc). Flush to ensure all draws hit
+                    // the output texture before returning control to
+                    // GstGL, which will do its own state setup on next
+                    // pass.
                     unsafe { gl::Finish(); }
                     gst::debug!(CAT, "Skia rendering completed successfully");
                     Ok(())
