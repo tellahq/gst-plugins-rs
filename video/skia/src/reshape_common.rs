@@ -555,7 +555,7 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
                                 structure.set(
                                     "height",
                                     height - settings.crop_top.round() as i32
-                                        - settings.crop_top.round() as i32
+                                        - settings.crop_bottom.round() as i32
                                         + 2 * settings.padding_px,
                                 );
                             }
