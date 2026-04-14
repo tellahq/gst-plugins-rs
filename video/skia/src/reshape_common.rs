@@ -23,10 +23,10 @@ pub struct Settings {
     pub border_radius_px: f64,
     pub curvature: f64, // CSS superellipse K value: 0=bevel, 1=round, 2=squircle
     pub padding_px: i32,
-    pub crop_left: i32,
-    pub crop_right: i32,
-    pub crop_top: i32,
-    pub crop_bottom: i32,
+    pub crop_left: f64,
+    pub crop_right: f64,
+    pub crop_top: f64,
+    pub crop_bottom: f64,
     pub disable_crop_optimization: bool,
 }
 
@@ -36,10 +36,10 @@ impl Default for Settings {
             border_radius_px: DEFAULT_BORDER_RADIUS,
             curvature: 2.0, // Default to squircle (CSS superellipse(2))
             padding_px: 0,
-            crop_left: 0,
-            crop_right: 0,
-            crop_top: 0,
-            crop_bottom: 0,
+            crop_left: 0.0,
+            crop_right: 0.0,
+            crop_top: 0.0,
+            crop_bottom: 0.0,
             disable_crop_optimization: true,
         }
     }
@@ -96,31 +96,31 @@ pub(crate) fn reshape_properties() -> Vec<glib::ParamSpec> {
             .default_value(0)
             .mutable_playing()
             .build(),
-        glib::ParamSpecInt::builder("crop-left")
+        glib::ParamSpecDouble::builder("crop-left")
             .nick("Crop left in pixels")
-            .blurb("Crop left in pixels")
-            .default_value(0)
+            .blurb("Crop left in pixels (subpixel precision)")
+            .default_value(0.0)
             .controllable()
             .mutable_playing()
             .build(),
-        glib::ParamSpecInt::builder("crop-right")
+        glib::ParamSpecDouble::builder("crop-right")
             .nick("Crop right in pixels")
-            .blurb("Crop right in pixels")
-            .default_value(0)
+            .blurb("Crop right in pixels (subpixel precision)")
+            .default_value(0.0)
             .mutable_playing()
             .controllable()
             .build(),
-        glib::ParamSpecInt::builder("crop-top")
+        glib::ParamSpecDouble::builder("crop-top")
             .nick("Crop top in pixels")
-            .blurb("Crop top in pixels")
-            .default_value(0)
+            .blurb("Crop top in pixels (subpixel precision)")
+            .default_value(0.0)
             .mutable_playing()
             .controllable()
             .build(),
-        glib::ParamSpecInt::builder("crop-bottom")
+        glib::ParamSpecDouble::builder("crop-bottom")
             .nick("Crop bottom in pixels")
-            .blurb("Crop bottom in pixels")
-            .default_value(0)
+            .blurb("Crop bottom in pixels (subpixel precision)")
+            .default_value(0.0)
             .mutable_playing()
             .controllable()
             .build(),
@@ -545,7 +545,8 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
                             if let Ok(width) = structure.get::<i32>("width") {
                                 structure.set(
                                     "width",
-                                    width - settings.crop_left - settings.crop_right
+                                    width - settings.crop_left.round() as i32
+                                        - settings.crop_right.round() as i32
                                         + 2 * settings.padding_px,
                                 );
                             }
@@ -553,7 +554,8 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
                             if let Ok(height) = structure.get::<i32>("height") {
                                 structure.set(
                                     "height",
-                                    height - settings.crop_top - settings.crop_top
+                                    height - settings.crop_top.round() as i32
+                                        - settings.crop_top.round() as i32
                                         + 2 * settings.padding_px,
                                 );
                             }
@@ -728,10 +730,10 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
                 settings.crop_right as f32,
                 settings.crop_top as f32,
                 settings.crop_bottom as f32,
-                settings.crop_left != 0
-                    || settings.crop_right != 0
-                    || settings.crop_top != 0
-                    || settings.crop_bottom != 0,
+                settings.crop_left != 0.0
+                    || settings.crop_right != 0.0
+                    || settings.crop_top != 0.0
+                    || settings.crop_bottom != 0.0,
             )
         };
 
