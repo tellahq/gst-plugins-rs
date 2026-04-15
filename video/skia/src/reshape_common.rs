@@ -230,36 +230,40 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
         // get true subpixel precision while integer crops stay byte-identical
         // to the previous integer-only path.
         //
-        // Step 1 — bound the texture to crop content via `make_subset`.
-        //   We use `round_out()` (floor min, ceil max) rather than `round()`
-        //   so the integer subset always CONTAINS the fractional crop (at
-        //   most 1 pixel of border on each side). This matters because
-        //   mipmaps are built from the subset: if outside-crop pixels were
-        //   in the texture, trilinear sampling near the edge could blend
-        //   them in. Bounding the subset to crop-adjacent content prevents
-        //   that regardless of the SrcRectConstraint we pass at draw time.
+        // Step 1 — `make_subset` with round_out (floor min, ceil max).
+        //   The subset rect must be an IRect, but our crop is fractional.
+        //   We need the integer subset to CONTAIN the fractional crop,
+        //   otherwise the fractional src we pass in step 2 would reference
+        //   pixels outside the subset bounds (e.g. crop_left=10.6 with
+        //   round() → subset starts at x=11, so fractional src at x=10.6
+        //   would be at -0.4 in subset coords — out of bounds).
+        //   round_out expands the subset by at most one pixel on each side,
+        //   so the fractional src fits inside.
         //
         // Step 2 — draw with an explicit fractional src_rect in subset
         //   coordinates, using SrcRectConstraint::Fast.
         //
         //   Why a fractional src_rect: this is what gives us subpixel
-        //     precision. Without it, the integer subset would be drawn as a
-        //     whole (None src) and we'd lose the fractional offset that the
-        //     crop was trying to express.
+        //     precision. Passing None (draw the whole subset) would
+        //     quantize to the integer subset bounds and we'd lose the
+        //     fractional offset the crop was trying to express.
         //
-        //   Why Fast instead of Strict: Strict forces Skia to pick a finer
-        //     mip level to guarantee sampling never reads outside src_rect.
-        //     That's not needed here — our subset already physically excludes
-        //     outside-crop content, so any sampling Fast does near the src
-        //     edge reads from the round_out border (which IS crop-adjacent,
-        //     sub-pixel content) rather than from unrelated pixels.
+        //   Why Fast instead of Strict: Strict is defensive against
+        //     sampling extending beyond src_rect — in a mipmapped
+        //     pipeline that matters, but images here aren't generated
+        //     mipmapped so sampling is plain bilinear on the subset
+        //     texels. Any sub-texel extension with Fast reads, at worst,
+        //     into the one-pixel round_out border of the subset. That's
+        //     content directly adjacent to the crop boundary, which is
+        //     what correct edge sampling of a fractional crop should
+        //     blend in anyway.
         //
-        //     The practical win: with Fast, integer-valued crops produce the
-        //     exact same output as the pre-fix code (subset + None src is
-        //     equivalent to subset + Some(whole_rect, Fast) in Skia), so
-        //     existing videos render bit-identically. Only animated
-        //     fractional crops see new pixel output, and only with the
-        //     subpixel precision improvement we want.
+        //     The practical win: for integer-valued crops, the fractional
+        //     src rect equals the whole subset (offsets are 0.0) and
+        //     `Some(whole_subset_rect, Fast)` is equivalent to passing
+        //     `None` — so existing videos render byte-identically to the
+        //     pre-fix code. Only fractional crops produce new output,
+        //     with the subpixel precision we want.
         let (cropped_image, src_rect_in_image) =
             if let Some(ref src_with_cropping_applied) = rects.src_with_cropping_applied {
                 let subset_int: skia::IRect = src_with_cropping_applied.round_out();
