@@ -4,7 +4,7 @@ use gst::glib;
 use gst::prelude::*;
 use gst_base::prelude::*;
 use gst_video::subclass::prelude::*;
-use skia;
+use skia::{self, RoundOut};
 
 use std::sync::LazyLock;
 
@@ -226,17 +226,24 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
         let mut paint = skia::Paint::default();
         paint.set_anti_alias(true);
 
-        let cropped_image =
+        // Build a subset image plus a fractional source rect inside that subset.
+        // The subset uses roundOut so it physically contains every pixel the
+        // fractional crop touches — this keeps mipmap filtering and sampling
+        // bounded to crop content (no bleed from outside-crop pixels). The
+        // fractional src_rect inside the subset then drives subpixel-precise
+        // sampling for animated crops (e.g. Ken Burns).
+        let (cropped_image, src_rect_in_image) =
             if let Some(ref src_with_cropping_applied) = rects.src_with_cropping_applied {
+                let subset_int: skia::IRect = src_with_cropping_applied.round_out();
                 let subset_result = image.make_subset(
                     direct
                         .as_deref_mut()
                         .map(|ctx| ctx.as_recorder() as &mut dyn skia::Recorder),
-                    src_with_cropping_applied.round(),
+                    subset_int,
                     Default::default(),
                 );
 
-                match (subset_result, &mut direct) {
+                let image = match (subset_result, &mut direct) {
                     (Some(img), _) => img,
                     (None, Some(direct_ctx)) => {
                         // Create a 1x1 transparent fallback image backed on GPU
@@ -271,14 +278,25 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
                         )
                         .expect("Failed to create empty raster image")
                     }
-                }
+                };
+
+                // Fractional source rect expressed in subset coordinates.
+                let src_in_subset = skia::Rect::from_ltrb(
+                    src_with_cropping_applied.left() - subset_int.left() as f32,
+                    src_with_cropping_applied.top() - subset_int.top() as f32,
+                    src_with_cropping_applied.right() - subset_int.left() as f32,
+                    src_with_cropping_applied.bottom() - subset_int.top() as f32,
+                );
+                (image, Some(src_in_subset))
             } else {
-                image.clone()
+                (image.clone(), None)
             };
 
         canvas.draw_image_rect_with_sampling_options(
             cropped_image,
-            None,
+            src_rect_in_image
+                .as_ref()
+                .map(|r| (r, skia::canvas::SrcRectConstraint::Strict)),
             rects.dst_rect,
             skia::SamplingOptions::new(skia::FilterMode::Linear, skia::MipmapMode::Linear),
             &paint,
