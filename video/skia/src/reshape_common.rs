@@ -588,11 +588,20 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
                     caps.get_mut()
                         .unwrap()
                         .map_in_place(move |_features, structure| {
+                            // Floor the total crop (= ceil the content width)
+                            // so the output buffer always has room for every
+                            // partially-covered pixel, including anti-aliased
+                            // sub-pixel coverage at the crop edges. Rounding
+                            // the sum rather than each side separately avoids
+                            // compounding up to 1 px of error.
                             if let Ok(width) = structure.get::<i32>("width") {
                                 structure.set(
                                     "width",
-                                    width - settings.crop_left.round() as i32
-                                        - settings.crop_right.round() as i32
+                                    width
+                                        - (settings.crop_left
+                                            + settings.crop_right)
+                                            .floor()
+                                            as i32
                                         + 2 * settings.padding_px,
                                 );
                             }
@@ -600,8 +609,11 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
                             if let Ok(height) = structure.get::<i32>("height") {
                                 structure.set(
                                     "height",
-                                    height - settings.crop_top.round() as i32
-                                        - settings.crop_bottom.round() as i32
+                                    height
+                                        - (settings.crop_top
+                                            + settings.crop_bottom)
+                                            .floor()
+                                            as i32
                                         + 2 * settings.padding_px,
                                 );
                             }
