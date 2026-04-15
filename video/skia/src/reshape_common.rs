@@ -226,12 +226,40 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
         let mut paint = skia::Paint::default();
         paint.set_anti_alias(true);
 
-        // Build a subset image plus a fractional source rect inside that subset.
-        // The subset uses roundOut so it physically contains every pixel the
-        // fractional crop touches — this keeps mipmap filtering and sampling
-        // bounded to crop content (no bleed from outside-crop pixels). The
-        // fractional src_rect inside the subset then drives subpixel-precise
-        // sampling for animated crops (e.g. Ken Burns).
+        // Two-step render so that animated fractional crops (e.g. Ken Burns)
+        // get true subpixel precision while integer crops stay byte-identical
+        // to the previous integer-only path.
+        //
+        // Step 1 — bound the texture to crop content via `make_subset`.
+        //   We use `round_out()` (floor min, ceil max) rather than `round()`
+        //   so the integer subset always CONTAINS the fractional crop (at
+        //   most 1 pixel of border on each side). This matters because
+        //   mipmaps are built from the subset: if outside-crop pixels were
+        //   in the texture, trilinear sampling near the edge could blend
+        //   them in. Bounding the subset to crop-adjacent content prevents
+        //   that regardless of the SrcRectConstraint we pass at draw time.
+        //
+        // Step 2 — draw with an explicit fractional src_rect in subset
+        //   coordinates, using SrcRectConstraint::Fast.
+        //
+        //   Why a fractional src_rect: this is what gives us subpixel
+        //     precision. Without it, the integer subset would be drawn as a
+        //     whole (None src) and we'd lose the fractional offset that the
+        //     crop was trying to express.
+        //
+        //   Why Fast instead of Strict: Strict forces Skia to pick a finer
+        //     mip level to guarantee sampling never reads outside src_rect.
+        //     That's not needed here — our subset already physically excludes
+        //     outside-crop content, so any sampling Fast does near the src
+        //     edge reads from the round_out border (which IS crop-adjacent,
+        //     sub-pixel content) rather than from unrelated pixels.
+        //
+        //     The practical win: with Fast, integer-valued crops produce the
+        //     exact same output as the pre-fix code (subset + None src is
+        //     equivalent to subset + Some(whole_rect, Fast) in Skia), so
+        //     existing videos render bit-identically. Only animated
+        //     fractional crops see new pixel output, and only with the
+        //     subpixel precision improvement we want.
         let (cropped_image, src_rect_in_image) =
             if let Some(ref src_with_cropping_applied) = rects.src_with_cropping_applied {
                 let subset_int: skia::IRect = src_with_cropping_applied.round_out();
@@ -296,7 +324,7 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
             cropped_image,
             src_rect_in_image
                 .as_ref()
-                .map(|r| (r, skia::canvas::SrcRectConstraint::Strict)),
+                .map(|r| (r, skia::canvas::SrcRectConstraint::Fast)),
             rects.dst_rect,
             skia::SamplingOptions::new(skia::FilterMode::Linear, skia::MipmapMode::Linear),
             &paint,
