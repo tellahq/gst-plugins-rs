@@ -22,10 +22,11 @@ enum YuvSubsampling {
 /// YUV memory layout
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum YuvLayout {
-    Planar,     // Y, U, V in separate planes (I420, YV12, Y42B, Y444)
-    SemiPlanar, // Y in one plane, UV interleaved in another (NV12, NV21, NV16, NV61, NV24)
-    Packed,     // YUV interleaved in single plane (YUY2, UYVY, VYUY, YVYU)
-    Grayscale,  // Single Y plane only (GRAY8)
+    Planar,      // Y, U, V in separate planes (I420, YV12, Y42B, Y444)
+    PlanarAlpha, // Y, U, V, A in separate planes (A420, A422, A444)
+    SemiPlanar,  // Y in one plane, UV interleaved in another (NV12, NV21, NV16, NV61, NV24)
+    Packed,      // YUV interleaved in single plane (YUY2, UYVY, VYUY, YVYU)
+    Grayscale,   // Single Y plane only (GRAY8)
 }
 
 /// UV component order for semi-planar formats
@@ -71,6 +72,15 @@ enum YuvToRgbParams {
         bit_depth: u32,
         range: YuvRange,
         matrix: YuvStandardMatrix,
+    },
+    PlanarAlpha {
+        subsampling: YuvSubsampling,
+        plane_order: (usize, usize, usize),
+        rgb_format: RgbFormat,
+        bit_depth: u32,
+        range: YuvRange,
+        matrix: YuvStandardMatrix,
+        // Note: YUVA always outputs RGBA (the yuv crate only has *_alpha_to_rgba)
     },
     Packed {
         packed_order: PackedOrder,
@@ -415,9 +425,10 @@ fn detect_yuv_layout(info: &gst_video::VideoInfo) -> YuvLayout {
     let n_planes = info.n_planes();
 
     match n_planes {
-        3 => YuvLayout::Planar,     // Y, U, V separate (I420, YV12, Y42B, Y444)
-        2 => YuvLayout::SemiPlanar, // Y, UV interleaved (NV12, NV21, NV16, NV61, NV24)
-        1 => YuvLayout::Packed,     // YUV interleaved (YUY2, UYVY, VYUY, YVYU)
+        4 => YuvLayout::PlanarAlpha, // Y, U, V, A separate (A420, A422, A444)
+        3 => YuvLayout::Planar,      // Y, U, V separate (I420, YV12, Y42B, Y444)
+        2 => YuvLayout::SemiPlanar,  // Y, UV interleaved (NV12, NV21, NV16, NV61, NV24)
+        1 => YuvLayout::Packed,      // YUV interleaved (YUY2, UYVY, VYUY, YVYU)
         _ => unreachable!("Invalid number of planes: {}", n_planes),
     }
 }
@@ -605,6 +616,27 @@ fn yuv_to_rgb_params(
             })
         }
 
+        YuvLayout::PlanarAlpha => {
+            let subsampling = detect_yuv_subsampling(in_info);
+            let plane_order = get_plane_order_introspected(in_info);
+
+            // The yuv crate only provides 8-bit YUVA → RGBA conversions.
+            (in_bit_depth == 8
+                && rgb_format == RgbFormat::Rgba
+                && matches!(
+                    subsampling,
+                    YuvSubsampling::S420 | YuvSubsampling::S422 | YuvSubsampling::S444
+                ))
+            .then(|| YuvToRgbParams::PlanarAlpha {
+                subsampling,
+                plane_order,
+                rgb_format,
+                bit_depth: in_bit_depth,
+                range,
+                matrix,
+            })
+        }
+
         YuvLayout::Packed => {
             // Packed YUV ONLY outputs RGB (not RGBA/BGR/BGRA)
             // The yuv crate functions are: yuyv422_to_rgb, uyvy422_to_rgb, etc.
@@ -666,6 +698,12 @@ fn rgb_to_yuv_params(
     match layout {
         YuvLayout::Packed => {
             // RGB to packed YUV is NOT SUPPORTED by yuv crate
+            None
+        }
+
+        YuvLayout::PlanarAlpha => {
+            // RGB → YUVA encoding isn't wired here; fall back to the stock
+            // converter for those (rare) outputs.
             None
         }
 
@@ -1025,6 +1063,90 @@ fn convert_planar_yuv_to_rgb<T>(
     } else {
         Err(format!("Unsupported bit depth: {}", bit_depth))
     }
+}
+
+/// Handler for planar YUV-with-alpha → RGBA conversions (A420, A422, A444).
+/// The alpha plane is always the 4th plane; output is RGBA with straight
+/// (non-premultiplied) alpha to match the rest of the pipeline.
+#[allow(clippy::too_many_arguments)]
+fn convert_planar_yuva_to_rgba<T>(
+    frame: &gst_video::VideoFrameRef<T>,
+    dest: &mut gst_video::VideoFrameRef<&mut gst::BufferRef>,
+    width: u32,
+    height: u32,
+    range: YuvRange,
+    matrix: YuvStandardMatrix,
+    plane_order: (usize, usize, usize),
+    subsampling: YuvSubsampling,
+    rgb_format: RgbFormat,
+    bit_depth: u32,
+) -> Result<(), String> {
+    // The yuv crate only provides 8-bit YUVA → RGBA.
+    if bit_depth != 8 || rgb_format != RgbFormat::Rgba {
+        return Err(format!(
+            "Unsupported planar-alpha conversion: {}-bit {:?}",
+            bit_depth, rgb_format
+        ));
+    }
+
+    let (y_plane_idx, u_plane_idx, v_plane_idx) = plane_order;
+    let a_plane_idx = 3usize;
+
+    let rgba_stride = dest.plane_stride()[0] as u32;
+    let rgba_data = dest
+        .plane_data_mut(0)
+        .map_err(|_| "Failed to get RGBA plane")?;
+
+    let y_plane = frame
+        .plane_data(y_plane_idx as u32)
+        .map_err(|_| "Failed to get Y plane")?;
+    let u_plane = frame
+        .plane_data(u_plane_idx as u32)
+        .map_err(|_| "Failed to get U plane")?;
+    let v_plane = frame
+        .plane_data(v_plane_idx as u32)
+        .map_err(|_| "Failed to get V plane")?;
+    let a_plane = frame
+        .plane_data(a_plane_idx as u32)
+        .map_err(|_| "Failed to get A plane")?;
+
+    let y_stride = frame.plane_stride()[y_plane_idx] as u32;
+    let u_stride = frame.plane_stride()[u_plane_idx] as u32;
+    let v_stride = frame.plane_stride()[v_plane_idx] as u32;
+    let a_stride = frame.plane_stride()[a_plane_idx] as u32;
+
+    let image = yuv::YuvPlanarImageWithAlpha {
+        y_plane,
+        y_stride,
+        u_plane,
+        u_stride,
+        v_plane,
+        v_stride,
+        a_plane,
+        a_stride,
+        width,
+        height,
+    };
+
+    let result = match subsampling {
+        YuvSubsampling::S420 => {
+            yuv::yuv420_alpha_to_rgba(&image, rgba_data, rgba_stride, range, matrix, false)
+        }
+        YuvSubsampling::S422 => {
+            yuv::yuv422_alpha_to_rgba(&image, rgba_data, rgba_stride, range, matrix, false)
+        }
+        YuvSubsampling::S444 => {
+            yuv::yuv444_alpha_to_rgba(&image, rgba_data, rgba_stride, range, matrix, false)
+        }
+        _ => {
+            return Err(format!(
+                "Unsupported planar-alpha subsampling: {:?}",
+                subsampling
+            ))
+        }
+    };
+
+    result.map_err(|e| format!("Planar YUVA to RGBA conversion failed: {:?}", e))
 }
 
 /// Generic handler for packed YUV→RGB conversions (YUY2, UYVY, VYUY, YVYU)
@@ -1755,6 +1877,25 @@ impl YuvConverter {
                     range,
                     matrix,
                 } => convert_planar_yuv_to_rgb(
+                    src,
+                    dest,
+                    width,
+                    height,
+                    range,
+                    matrix,
+                    plane_order,
+                    subsampling,
+                    rgb_format,
+                    bit_depth,
+                ),
+                YuvToRgbParams::PlanarAlpha {
+                    subsampling,
+                    plane_order,
+                    rgb_format,
+                    bit_depth,
+                    range,
+                    matrix,
+                } => convert_planar_yuva_to_rgba(
                     src,
                     dest,
                     width,
