@@ -4,7 +4,7 @@ use gst::glib;
 use gst::prelude::*;
 use gst_base::prelude::*;
 use gst_video::subclass::prelude::*;
-use skia;
+use skia::{self, RoundOut};
 
 use std::sync::LazyLock;
 
@@ -23,10 +23,10 @@ pub struct Settings {
     pub border_radius_px: f64,
     pub curvature: f64, // CSS superellipse K value: 0=bevel, 1=round, 2=squircle
     pub padding_px: i32,
-    pub crop_left: i32,
-    pub crop_right: i32,
-    pub crop_top: i32,
-    pub crop_bottom: i32,
+    pub crop_left: f64,
+    pub crop_right: f64,
+    pub crop_top: f64,
+    pub crop_bottom: f64,
     pub disable_crop_optimization: bool,
 }
 
@@ -36,10 +36,10 @@ impl Default for Settings {
             border_radius_px: DEFAULT_BORDER_RADIUS,
             curvature: 2.0, // Default to squircle (CSS superellipse(2))
             padding_px: 0,
-            crop_left: 0,
-            crop_right: 0,
-            crop_top: 0,
-            crop_bottom: 0,
+            crop_left: 0.0,
+            crop_right: 0.0,
+            crop_top: 0.0,
+            crop_bottom: 0.0,
             disable_crop_optimization: true,
         }
     }
@@ -96,31 +96,31 @@ pub(crate) fn reshape_properties() -> Vec<glib::ParamSpec> {
             .default_value(0)
             .mutable_playing()
             .build(),
-        glib::ParamSpecInt::builder("crop-left")
+        glib::ParamSpecDouble::builder("crop-left")
             .nick("Crop left in pixels")
-            .blurb("Crop left in pixels")
-            .default_value(0)
+            .blurb("Crop left in pixels (subpixel precision)")
+            .default_value(0.0)
             .controllable()
             .mutable_playing()
             .build(),
-        glib::ParamSpecInt::builder("crop-right")
+        glib::ParamSpecDouble::builder("crop-right")
             .nick("Crop right in pixels")
-            .blurb("Crop right in pixels")
-            .default_value(0)
+            .blurb("Crop right in pixels (subpixel precision)")
+            .default_value(0.0)
             .mutable_playing()
             .controllable()
             .build(),
-        glib::ParamSpecInt::builder("crop-top")
+        glib::ParamSpecDouble::builder("crop-top")
             .nick("Crop top in pixels")
-            .blurb("Crop top in pixels")
-            .default_value(0)
+            .blurb("Crop top in pixels (subpixel precision)")
+            .default_value(0.0)
             .mutable_playing()
             .controllable()
             .build(),
-        glib::ParamSpecInt::builder("crop-bottom")
+        glib::ParamSpecDouble::builder("crop-bottom")
             .nick("Crop bottom in pixels")
-            .blurb("Crop bottom in pixels")
-            .default_value(0)
+            .blurb("Crop bottom in pixels (subpixel precision)")
+            .default_value(0.0)
             .mutable_playing()
             .controllable()
             .build(),
@@ -226,17 +226,56 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
         let mut paint = skia::Paint::default();
         paint.set_anti_alias(true);
 
-        let cropped_image =
+        // Two-step render so that animated fractional crops (e.g. Ken Burns)
+        // get true subpixel precision while integer crops stay byte-identical
+        // to the previous integer-only path.
+        //
+        // Step 1 — `make_subset` with round_out (floor min, ceil max).
+        //   The subset rect must be an IRect, but our crop is fractional.
+        //   We need the integer subset to CONTAIN the fractional crop,
+        //   otherwise the fractional src we pass in step 2 would reference
+        //   pixels outside the subset bounds (e.g. crop_left=10.6 with
+        //   round() → subset starts at x=11, so fractional src at x=10.6
+        //   would be at -0.4 in subset coords — out of bounds).
+        //   round_out expands the subset by at most one pixel on each side,
+        //   so the fractional src fits inside.
+        //
+        // Step 2 — draw with an explicit fractional src_rect in subset
+        //   coordinates, using SrcRectConstraint::Fast.
+        //
+        //   Why a fractional src_rect: this is what gives us subpixel
+        //     precision. Passing None (draw the whole subset) would
+        //     quantize to the integer subset bounds and we'd lose the
+        //     fractional offset the crop was trying to express.
+        //
+        //   Why Fast instead of Strict: Strict is defensive against
+        //     sampling extending beyond src_rect — in a mipmapped
+        //     pipeline that matters, but images here aren't generated
+        //     mipmapped so sampling is plain bilinear on the subset
+        //     texels. Any sub-texel extension with Fast reads, at worst,
+        //     into the one-pixel round_out border of the subset. That's
+        //     content directly adjacent to the crop boundary, which is
+        //     what correct edge sampling of a fractional crop should
+        //     blend in anyway.
+        //
+        //     The practical win: for integer-valued crops, the fractional
+        //     src rect equals the whole subset (offsets are 0.0) and
+        //     `Some(whole_subset_rect, Fast)` is equivalent to passing
+        //     `None` — so existing videos render byte-identically to the
+        //     pre-fix code. Only fractional crops produce new output,
+        //     with the subpixel precision we want.
+        let (cropped_image, src_rect_in_image) =
             if let Some(ref src_with_cropping_applied) = rects.src_with_cropping_applied {
+                let subset_int: skia::IRect = src_with_cropping_applied.round_out();
                 let subset_result = image.make_subset(
                     direct
                         .as_deref_mut()
                         .map(|ctx| ctx.as_recorder() as &mut dyn skia::Recorder),
-                    src_with_cropping_applied.round(),
+                    subset_int,
                     Default::default(),
                 );
 
-                match (subset_result, &mut direct) {
+                let image = match (subset_result, &mut direct) {
                     (Some(img), _) => img,
                     (None, Some(direct_ctx)) => {
                         // Create a 1x1 transparent fallback image backed on GPU
@@ -271,14 +310,25 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
                         )
                         .expect("Failed to create empty raster image")
                     }
-                }
+                };
+
+                // Fractional source rect expressed in subset coordinates.
+                let src_in_subset = skia::Rect::from_ltrb(
+                    src_with_cropping_applied.left() - subset_int.left() as f32,
+                    src_with_cropping_applied.top() - subset_int.top() as f32,
+                    src_with_cropping_applied.right() - subset_int.left() as f32,
+                    src_with_cropping_applied.bottom() - subset_int.top() as f32,
+                );
+                (image, Some(src_in_subset))
             } else {
-                image.clone()
+                (image.clone(), None)
             };
 
         canvas.draw_image_rect_with_sampling_options(
             cropped_image,
-            None,
+            src_rect_in_image
+                .as_ref()
+                .map(|r| (r, skia::canvas::SrcRectConstraint::Fast)),
             rects.dst_rect,
             skia::SamplingOptions::new(skia::FilterMode::Linear, skia::MipmapMode::Linear),
             &paint,
@@ -542,10 +592,20 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
                     caps.get_mut()
                         .unwrap()
                         .map_in_place(move |_features, structure| {
+                            // Floor the total crop (= ceil the content width)
+                            // so the output buffer always has room for every
+                            // partially-covered pixel, including anti-aliased
+                            // sub-pixel coverage at the crop edges. Rounding
+                            // the sum rather than each side separately avoids
+                            // compounding up to 1 px of error.
                             if let Ok(width) = structure.get::<i32>("width") {
                                 structure.set(
                                     "width",
-                                    width - settings.crop_left - settings.crop_right
+                                    width
+                                        - (settings.crop_left
+                                            + settings.crop_right)
+                                            .floor()
+                                            as i32
                                         + 2 * settings.padding_px,
                                 );
                             }
@@ -553,7 +613,11 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
                             if let Ok(height) = structure.get::<i32>("height") {
                                 structure.set(
                                     "height",
-                                    height - settings.crop_top - settings.crop_top
+                                    height
+                                        - (settings.crop_top
+                                            + settings.crop_bottom)
+                                            .floor()
+                                            as i32
                                         + 2 * settings.padding_px,
                                 );
                             }
@@ -728,10 +792,10 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
                 settings.crop_right as f32,
                 settings.crop_top as f32,
                 settings.crop_bottom as f32,
-                settings.crop_left != 0
-                    || settings.crop_right != 0
-                    || settings.crop_top != 0
-                    || settings.crop_bottom != 0,
+                settings.crop_left != 0.0
+                    || settings.crop_right != 0.0
+                    || settings.crop_top != 0.0
+                    || settings.crop_bottom != 0.0,
             )
         };
 
