@@ -30,6 +30,10 @@ pub struct Settings {
     pub disable_crop_optimization: bool,
 }
 
+fn cropped_extent(extent: i32, leading: i32, trailing: i32, padding: i32) -> i32 {
+    extent - leading - trailing + 2 * padding
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Settings {
@@ -545,16 +549,24 @@ pub trait ReshapeCommon: BaseTransformImpl + ObjectImpl {
                             if let Ok(width) = structure.get::<i32>("width") {
                                 structure.set(
                                     "width",
-                                    width - settings.crop_left - settings.crop_right
-                                        + 2 * settings.padding_px,
+                                    cropped_extent(
+                                        width,
+                                        settings.crop_left,
+                                        settings.crop_right,
+                                        settings.padding_px,
+                                    ),
                                 );
                             }
 
                             if let Ok(height) = structure.get::<i32>("height") {
                                 structure.set(
                                     "height",
-                                    height - settings.crop_top - settings.crop_top
-                                        + 2 * settings.padding_px,
+                                    cropped_extent(
+                                        height,
+                                        settings.crop_top,
+                                        settings.crop_bottom,
+                                        settings.padding_px,
+                                    ),
                                 );
                             }
 
@@ -954,5 +966,16 @@ pub fn add_original_frame_meta(outbuf: &mut gst::BufferRef, inbuf: &gst::BufferR
     #[cfg(not(feature = "ges"))]
     {
         let _ = (outbuf, inbuf);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cropped_extent;
+
+    #[test]
+    fn asymmetric_crop_uses_both_edges() {
+        assert_eq!(cropped_extent(1080, 0, 2, 0), 1078);
+        assert_eq!(cropped_extent(1080, 236, 4, 3), 846);
     }
 }
